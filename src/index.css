@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Cyberpunk Dark Theme - Deep blacks with neon accents */
+    --background: 0 0% 5%;
+    --foreground: 0 0% 95%;
+
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 180 100% 50%; /* Neon Cyan */
+    --primary-foreground: 0 0% 5%;
+
+    --secondary: 300 100% 50%; /* Neon Magenta */
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 60%;
+
+    --accent: 30 100% 50%; /* Neon Orange */
+    --accent-foreground: 0 0% 5%;
+
+    --success: 120 100% 50%; /* Neon Green */
+    --success-foreground: 0 0% 5%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 95%;
+
+    --border: 0 0% 20%;
+    --input: 0 0% 15%;
+    --ring: 180 100% 50%;
+
+    --radius: 0rem; /* No border radius for UI elements */
+
+    /* Glow effects */
+    --glow-cyan: 0 0 20px hsl(180 100% 50% / 0.5);
+    --glow-magenta: 0 0 20px hsl(300 100% 50% / 0.5);
+    --glow-orange: 0 0 20px hsl(30 100% 50% / 0.5);
+    --glow-green: 0 0 20px hsl(120 100% 50% / 0.5);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  }
+
+  /* Glow utilities */
+  .glow-cyan {
+    box-shadow: var(--glow-cyan);
+  }
+
+  .glow-magenta {
+    box-shadow: var(--glow-magenta);
+  }
+
+  .glow-orange {
+    box-shadow: var(--glow-orange);
+  }
+
+  .glow-green {
+    box-shadow: var(--glow-green);
+  }
+
+  /* Pulsing animation for high-influence nodes */
+  @keyframes pulse-glow {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.7;
+      transform: scale(1.05);
+    }
+  }
+
+  .pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  /* Particle effect */
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-20px);
+    }
+  }
+
+  .particle {
+    animation: float 3s ease-in-out infinite;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
