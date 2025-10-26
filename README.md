@@ -5,7 +5,7 @@
 ---
 
 ## 🚀 Live Demo
-[View AtenFlux Demo](#)
+[View AtenFlux Demo](https://aten.vercel.app)
 
 ---
 
@@ -34,8 +34,6 @@
 </div>
 
 ---
-
-## 🛠️ Tech Stack
 
 ## 🛠️ Tech Stack
 

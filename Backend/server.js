@@ -19,7 +19,7 @@ const SERP_API_KEY = process.env.SERP_API_KEY;
 
 const allowedOrigins = [
   "http://localhost:8080",     
-  "https://aten.vercel.app"     
+  "https://aten.vercel.app"   
 ];
 
 app.use(cors({
