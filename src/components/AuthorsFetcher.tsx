@@ -37,7 +37,7 @@ export default function AuthorsFetcher() {
 
     const urls = [
       "http://localhost:5003/scrape-authors",
-      "https://aten-a6od.onrender.com/scrape-authors"
+      "https://aten-131r.onrender.com/scrape-authors"
     ];
 
     try {

@@ -11,7 +11,7 @@ export const TopInfluencers = ({ onJournalistClick }: { onJournalistClick?: (id:
     const fetchTopJournalists = async () => {
       const urls = [
         "http://localhost:5003/top-journalists",
-        "https://aten-a6od.onrender.com/top-journalists"
+        "https://aten-131r.onrender.com/top-journalists"
       ];
 
       let data: Journalist[] | null = null;

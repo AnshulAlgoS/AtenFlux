@@ -33,7 +33,7 @@ export const NetworkGraph = () => {
     const fetchAuthors = async () => {
       const urls = [
         'http://localhost:5003/authors',
-        'https://aten-a6od.onrender.com/authors'
+        'https://aten-131r.onrender.com/authors'
       ];
 
       let authors: any[] | null = null;

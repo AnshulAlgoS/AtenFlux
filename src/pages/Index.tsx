@@ -78,7 +78,7 @@ const Index = () => {
 
   // ---------------- Fetch outlets ----------------
   const fetchOutlets = async () => {
-    const urls = ["http://localhost:5003/outlets", "https://aten-a6od.onrender.com/outlets"];
+    const urls = ["http://localhost:5003/outlets", "https://aten-131r.onrender.com/outlets"];
     for (const url of urls) {
       try {
         const res = await axios.get(url);
@@ -92,7 +92,7 @@ const Index = () => {
   const fetchTopJournalists = async () => {
     const urls = [
       "http://localhost:5003/top-journalists",
-      "https://aten-a6od.onrender.com/top-journalists",
+      "https://aten-131r.onrender.com/top-journalists",
     ];
 
     let data: Journalist[] | null = null;

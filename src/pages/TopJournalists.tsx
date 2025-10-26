@@ -44,7 +44,7 @@ const TopJournalists = () => {
     const fetchJournalists = async () => {
       const urls = [
         "http://localhost:5003/authorprofiles",
-        "https://aten-a6od.onrender.com/authorprofiles",
+        "https://aten-131r.onrender.com/authorprofiles",
       ];
       let data: Journalist[] | null = null;
 

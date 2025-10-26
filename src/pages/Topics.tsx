@@ -41,7 +41,7 @@ const Topics = () => {
 
   useEffect(() => {
     const fetchTopics = async () => {
-      const urls = ["http://localhost:5003/topics", "https://aten-a6od.onrender.com/topics"];
+      const urls = ["http://localhost:5003/topics", "https://aten-131r.onrender.com/topics"];
       let data: Topic[] | null = null;
 
       for (const url of urls) {

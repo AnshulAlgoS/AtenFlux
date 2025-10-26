@@ -20,7 +20,7 @@ export const ActivityFeed = () => {
     try {
       const urls = [
         "http://localhost:5003/activities",
-        "https://aten-a6od.onrender.com/activities"
+        "https://aten-131r.onrender.com/activities"
       ];
       const responses = await Promise.all(urls.map(url => fetch(url)));
       const dataArrays = await Promise.all(responses.map(res => res.json()));
