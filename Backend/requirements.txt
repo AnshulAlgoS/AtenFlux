@@ -1,0 +1,33 @@
+# Backend Requirements for NewsTrace/AtenFlux
+# This is a Node.js project. Install dependencies with: npm install
+
+# Core Dependencies
+axios@^1.6.0              # HTTP client for web scraping and API requests
+cheerio@^1.0.0-rc.12      # Fast, flexible HTML parser for web scraping (no browser needed)
+cors@^2.8.5               # Cross-Origin Resource Sharing middleware
+dotenv@^16.3.1            # Environment variable management
+express@^4.18.2           # Web application framework
+mongoose@^8.0.0           # MongoDB object modeling
+socket.io@^4.6.0          # Real-time bidirectional event-based communication
+
+# Environment Variables Required (.env file)
+# MONGO_URI=mongodb+srv://your-mongo-uri
+# SERP_API_KEY=your-serp-api-key (optional, for Stage 0 website detection)
+# PORT=5002
+
+# System Requirements
+# - Node.js >= 18.0.0
+# - MongoDB instance (local or cloud)
+# - Internet connection for web scraping
+
+# Installation Instructions
+# 1. cd Backend
+# 2. npm install
+# 3. Create .env file with required variables
+# 4. npm start
+
+# Deployment Notes
+# - This solution uses Cheerio instead of Puppeteer for better deployment compatibility
+# - Works on Render, Heroku, Railway, Vercel, and other platforms
+# - No browser/headless Chrome required
+# - Lightweight and fast
