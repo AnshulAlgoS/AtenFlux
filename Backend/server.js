@@ -821,10 +821,26 @@ app.get('/topics', async (req, res) => {
 
 app.get("/outlets", async (req, res) => {
   try {
-    const outlets = await Author.distinct("outlet");
-    res.json(outlets);
+    // Get all outlets from AuthorProfile (contains enriched data)
+    const outlets = await AuthorProfile.distinct("outlet");
+    
+    // Normalize to lowercase, deduplicate, then return in original case
+    const outletMap = new Map();
+    
+    // First pass: collect all variations
+    for (const outlet of outlets) {
+      const normalized = outlet.toLowerCase().trim();
+      if (!outletMap.has(normalized)) {
+        outletMap.set(normalized, outlet);
+      }
+    }
+    
+    // Return unique outlets sorted alphabetically
+    const uniqueOutlets = Array.from(outletMap.values()).sort();
+    
+    res.json(uniqueOutlets);
   } catch (err) {
-    console.error(" Error fetching outlets:", err);
+    console.error("Error fetching outlets:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

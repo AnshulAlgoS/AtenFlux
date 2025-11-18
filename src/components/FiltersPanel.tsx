@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Filter, X } from 'lucide-react';
+import { Badge } from "@/components/ui/badge";
 
 interface FiltersPanelProps {
   topics: string[];
@@ -55,26 +56,25 @@ export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelPr
         )}
       </div>
 
-      {/* Topics */}
-      <div className="mb-6">
-        <h4 className="text-xs font-mono uppercase text-muted-foreground mb-3">
+      {/* Topics Filter */}
+      <div className="space-y-3">
+        <label className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
           Topics
-        </h4>
+        </label>
         <div className="flex flex-wrap gap-2">
           {topics.map((topic) => (
-            <Button
+            <Badge
               key={topic}
-              onClick={() => toggleTopic(topic)}
-              variant={selectedTopics.includes(topic) ? 'default' : 'outline'}
-              size="sm"
-              className={`text-xs font-mono transition-all ${
+              variant={selectedTopics.includes(topic) ? "default" : "outline"}
+              className={`cursor-pointer transition-all hover:scale-105 ${
                 selectedTopics.includes(topic)
-                  ? 'bg-primary text-primary-foreground glow-cyan'
-                  : 'border-primary/30 hover:border-primary/60'
+                  ? "glow-cyan bg-primary text-primary-foreground"
+                  : "hover:bg-primary/10"
               }`}
+              onClick={() => toggleTopic(topic)}
             >
               {topic}
-            </Button>
+            </Badge>
           ))}
         </div>
       </div>
@@ -84,24 +84,39 @@ export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelPr
         <h4 className="text-xs font-mono uppercase text-muted-foreground mb-3">
           Outlets
         </h4>
-        <div className="flex flex-wrap gap-2">
-          {outlets.slice(0, 6).map((outlet) => (
-            <Button
-              key={outlet}
-              onClick={() => toggleOutlet(outlet)}
-              variant={selectedOutlets.includes(outlet) ? 'default' : 'outline'}
-              size="sm"
-              className={`text-xs font-mono transition-all ${
-                selectedOutlets.includes(outlet)
-                  ? 'bg-secondary text-secondary-foreground glow-magenta'
-                  : 'border-secondary/30 hover:border-secondary/60'
-              }`}
-            >
-              {outlet}
-            </Button>
-          ))}
-        </div>
+        {outlets.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {outlets.map((outlet) => (
+              <Button
+                key={outlet}
+                onClick={() => toggleOutlet(outlet)}
+                variant={selectedOutlets.includes(outlet) ? 'default' : 'outline'}
+                size="sm"
+                className={`text-xs font-mono transition-all ${
+                  selectedOutlets.includes(outlet)
+                    ? 'bg-secondary text-secondary-foreground glow-magenta'
+                    : 'border-secondary/30 hover:border-secondary/60'
+                }`}
+              >
+                {outlet}
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground font-mono italic">
+            No outlets available
+          </p>
+        )}
       </div>
+
+      {/* Active Filters Summary */}
+      {(selectedTopics.length > 0 || selectedOutlets.length > 0) && (
+        <div className="pt-3 border-t border-primary/20">
+          <p className="text-xs text-muted-foreground font-mono">
+            Active: {selectedTopics.length + selectedOutlets.length} filter(s)
+          </p>
+        </div>
+      )}
     </Card>
   );
 };

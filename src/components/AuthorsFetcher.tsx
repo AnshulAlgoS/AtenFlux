@@ -58,117 +58,55 @@ export default function AuthorsFetcher() {
     setAuthors([]);
     setLogs([]);
 
-    addLog(`🚀 Starting discovery for: "${outlet}"`);
+    addLog(`🚀 Discovering journalists from: "${outlet}"`);
     addLog(`📊 This will scrape up to 30 authors with full profiles`);
 
     const urls = getFallbackUrls(API_ENDPOINTS.DISCOVER_AND_SCRAPE);
     
+    addLog(`📡 Trying URLs: ${urls.join(', ')}`);
+
     try {
-      // Start the job
-      let startRes;
+      let res;
       for (const url of urls) {
         try {
-          addLog(`⏳ Starting job at: ${url}`);
-          startRes = await axios.post(
+          addLog(`⏳ Attempting: ${url}`);
+          res = await axios.post(
             url,
             { outlet, maxAuthors: 30 },
             { 
               headers: { "Cache-Control": "no-cache" }, 
-              timeout: 10000 // Quick timeout for starting job
+              timeout: 300000 // 5 minutes for full scraping
             }
           );
-          addLog(`✅ Job started successfully`);
+          addLog(`✅ Successfully scraped from ${url}`);
           break;
         } catch (err: any) {
-          addLog(`⚠️ Failed to start: ${err.message}`);
+          addLog(`⚠️ Failed: ${err.message}`);
         }
       }
 
-      if (!startRes) {
+      if (!res) {
         setError("❌ All backend endpoints failed. Make sure backend is running.");
-        addLog("❌ Failed to start job");
-        setLoading(false);
+        addLog("❌ Failed to scrape from all endpoints");
         return;
       }
 
-      const { jobId, statusEndpoint } = startRes.data;
+      const result = res.data;
       
-      if (!jobId) {
-        setError("❌ No job ID received from server");
-        addLog("❌ Invalid response from server");
-        setLoading(false);
+      console.log('📊 API Response:', result);
+      console.log('👥 Authors array:', result.authors);
+      console.log('📈 Authors count:', result.authorsCount);
+      
+      if (!result.authors || result.authors.length === 0) {
+        setError("No authors found for this outlet");
+        addLog("⚠️ No authors discovered");
         return;
       }
 
-      addLog(`📋 Job ID: ${jobId}`);
-      addLog(`🔄 Polling for progress...`);
-
-      // Poll for job status
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusUrls = getFallbackUrls(`${API_ENDPOINTS.JOB_STATUS}/${jobId}`);
-          
-          let statusRes;
-          for (const url of statusUrls) {
-            try {
-              statusRes = await axios.get(url, { timeout: 5000 });
-              break;
-            } catch (err) {
-              // Try next URL
-            }
-          }
-
-          if (!statusRes) {
-            addLog(`⚠️ Failed to fetch status, retrying...`);
-            return;
-          }
-
-          const jobStatus = statusRes.data;
-          
-          // Update progress
-          addLog(`📊 Progress: ${jobStatus.progress}% - ${jobStatus.message}`);
-          
-          if (jobStatus.authorsFound > 0) {
-            addLog(`👥 Authors discovered: ${jobStatus.authorsFound}`);
-          }
-
-          if (jobStatus.status === 'completed') {
-            clearInterval(pollInterval);
-            
-            addLog(`✅ Scraping completed!`);
-            addLog(`💾 Saved ${jobStatus.authorsSaved} profiles to database`);
-            
-            if (jobStatus.authors && jobStatus.authors.length > 0) {
-              setAuthors(jobStatus.authors);
-              addLog(`📰 Total articles scraped: ${jobStatus.authors.reduce((sum: number, a: any) => sum + a.totalArticles, 0)}`);
-            } else {
-              setError("No authors data in response");
-              addLog("⚠️ Job completed but no authors returned");
-            }
-            
-            setLoading(false);
-          } else if (jobStatus.status === 'failed') {
-            clearInterval(pollInterval);
-            
-            setError(jobStatus.error || "Scraping failed");
-            addLog(`❌ Job failed: ${jobStatus.error || jobStatus.message}`);
-            setLoading(false);
-          }
-
-        } catch (err: any) {
-          addLog(`⚠️ Status check error: ${err.message}`);
-        }
-      }, 2000); // Poll every 2 seconds
-
-      // Timeout after 15 minutes
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        if (loading) {
-          setError("Scraping took too long (>15 min). Check database for results.");
-          addLog("⏱️ Timeout reached");
-          setLoading(false);
-        }
-      }, 15 * 60 * 1000);
+      setAuthors(result.authors);
+      addLog(`✅ Discovered ${result.authorsCount} journalists!`);
+      addLog(`💾 Saved ${result.savedToDatabase} profiles to database`);
+      addLog(`📰 Total articles scraped: ${result.authors.reduce((sum, a) => sum + a.totalArticles, 0)}`);
 
     } catch (err: any) {
       if (err.response?.data?.error) {
@@ -178,11 +116,11 @@ export default function AuthorsFetcher() {
         setError(err.message);
         addLog(`❌ Error: ${err.message}`);
       } else {
-        setError("Failed to start scraping");
+        setError("Failed to discover authors");
         addLog("❌ Unknown error");
       }
-      setLoading(false);
     } finally {
+      setLoading(false);
       addLog("🏁 Process finished");
     }
   };
@@ -294,55 +232,102 @@ export default function AuthorsFetcher() {
 
       {/* Profile Modal */}
       {showModal && selectedProfile && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-card rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-border">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-lg shadow-2xl border-2 border-primary/30 max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col glow-cyan">
             {/* Header */}
-            <div className="sticky top-0 bg-primary text-primary-foreground p-6 border-b border-border flex justify-between items-start">
-              <div>
-                <h2 className="text-2xl font-bold">{selectedProfile.name}</h2>
-                <p className="text-sm opacity-90 mt-1">{selectedProfile.outlet}</p>
-                {selectedProfile.role && (
-                  <p className="text-sm opacity-80 mt-1">Role: {selectedProfile.role}</p>
-                )}
+            <div className="bg-gradient-to-r from-primary/20 via-secondary/10 to-primary/20 border-b-2 border-primary/50 p-8 relative overflow-hidden">
+              {/* Animated background grid */}
+              <div className="absolute inset-0 opacity-10">
+                <div className="absolute inset-0" style={{
+                  backgroundImage: 'linear-gradient(0deg, transparent 24%, rgba(0, 255, 255, .1) 25%, rgba(0, 255, 255, .1) 26%, transparent 27%, transparent 74%, rgba(0, 255, 255, .1) 75%, rgba(0, 255, 255, .1) 76%, transparent 77%, transparent), linear-gradient(90deg, transparent 24%, rgba(0, 255, 255, .1) 25%, rgba(0, 255, 255, .1) 26%, transparent 27%, transparent 74%, rgba(0, 255, 255, .1) 75%, rgba(0, 255, 255, .1) 76%, transparent 77%, transparent)',
+                  backgroundSize: '50px 50px'
+                }}></div>
               </div>
+
+              {/* Close Button */}
               <button
                 onClick={closeModal}
-                className="text-primary-foreground hover:bg-primary-foreground/20 rounded-full p-2 transition-colors"
+                className="absolute top-4 right-4 w-10 h-10 bg-muted/80 hover:bg-primary/20 border border-primary/30 hover:border-primary flex items-center justify-center transition-all duration-200 hover:glow-cyan group"
               >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <span className="text-2xl text-primary group-hover:rotate-90 transition-transform duration-200">×</span>
               </button>
+
+              {/* Author Info */}
+              <div className="relative flex items-start gap-6">
+                {/* Avatar */}
+                <div className="flex-shrink-0">
+                  <div className="w-24 h-24 bg-muted border-2 border-primary flex items-center justify-center glow-cyan">
+                    <span className="text-5xl font-bold text-primary font-mono">
+                      {selectedProfile.name.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Details */}
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-3xl font-bold mb-3 break-words text-foreground font-mono">
+                    {selectedProfile.name}
+                  </h2>
+                  <div className="flex flex-wrap gap-3 mb-4">
+                    <span className="px-4 py-1.5 bg-primary/10 border border-primary text-primary text-sm font-medium font-mono">
+                      📰 {selectedProfile.outlet}
+                    </span>
+                    <span className="px-4 py-1.5 bg-secondary/10 border border-secondary text-secondary text-sm font-medium font-mono">
+                      📝 {selectedProfile.totalArticles} articles
+                    </span>
+                    {selectedProfile.role && (
+                      <span className="px-4 py-1.5 bg-accent/10 border border-accent text-accent text-sm font-medium font-mono">
+                        👤 {selectedProfile.role}
+                      </span>
+                    )}
+                  </div>
+                  {selectedProfile.profileUrl && (
+                    <a
+                      href={selectedProfile.profileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary/20 text-primary border border-primary font-medium font-mono hover:bg-primary hover:text-primary-foreground transition-all duration-200 glow-cyan"
+                    >
+                      <span>View Profile</span>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </a>
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* Content */}
-            <div className="p-6 space-y-6">
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-8 bg-card/50">
               {/* Bio */}
               {selectedProfile.bio && (
-                <div>
-                  <h3 className="text-lg font-semibold text-foreground mb-2">📝 Bio</h3>
-                  <p className="text-muted-foreground">{selectedProfile.bio}</p>
+                <div className="mb-6 p-4 bg-muted/30 border border-border">
+                  <h3 className="text-lg font-semibold text-primary mb-2 font-mono flex items-center gap-2">
+                    <span>📝</span> Bio
+                  </h3>
+                  <p className="text-muted-foreground font-mono text-sm leading-relaxed">{selectedProfile.bio}</p>
                 </div>
               )}
 
-              {/* Contact Info */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Contact Info Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 {selectedProfile.email && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground mb-1">📧 Email</h3>
-                    <a href={`mailto:${selectedProfile.email}`} className="text-primary hover:underline">
+                  <div className="p-4 bg-muted/30 border border-border hover:border-primary/50 transition-colors">
+                    <h3 className="text-sm font-semibold text-primary mb-2 font-mono">📧 Email</h3>
+                    <a href={`mailto:${selectedProfile.email}`} className="text-foreground hover:text-primary transition-colors font-mono text-sm break-all">
                       {selectedProfile.email}
                     </a>
                   </div>
                 )}
                 
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-1">🔗 Profile URL</h3>
+                <div className="p-4 bg-muted/30 border border-border hover:border-primary/50 transition-colors">
+                  <h3 className="text-sm font-semibold text-primary mb-2 font-mono">🔗 Profile URL</h3>
                   <a 
                     href={selectedProfile.profileUrl} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="text-primary hover:underline text-sm"
+                    className="text-foreground hover:text-primary transition-colors font-mono text-sm break-all"
                   >
                     View Original Profile →
                   </a>
@@ -351,15 +336,17 @@ export default function AuthorsFetcher() {
 
               {/* Social Links */}
               {selectedProfile.socialLinks && Object.keys(selectedProfile.socialLinks).length > 0 && (
-                <div>
-                  <h3 className="text-lg font-semibold text-foreground mb-2">🌐 Social Media</h3>
+                <div className="mb-6 p-4 bg-muted/30 border border-border">
+                  <h3 className="text-lg font-semibold text-secondary mb-4 font-mono flex items-center gap-2">
+                    <span>🌐</span> Social Media
+                  </h3>
                   <div className="flex gap-3 flex-wrap">
                     {selectedProfile.socialLinks.twitter && (
                       <a
                         href={selectedProfile.socialLinks.twitter}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors text-sm"
+                        className="px-4 py-2 bg-primary/20 text-primary border border-primary font-mono text-sm hover:bg-primary hover:text-primary-foreground transition-all duration-200"
                       >
                         Twitter
                       </a>
@@ -369,7 +356,7 @@ export default function AuthorsFetcher() {
                         href={selectedProfile.socialLinks.linkedin}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-4 py-2 bg-blue-700 text-white rounded hover:bg-blue-800 transition-colors text-sm"
+                        className="px-4 py-2 bg-primary/20 text-primary border border-primary font-mono text-sm hover:bg-primary hover:text-primary-foreground transition-all duration-200"
                       >
                         LinkedIn
                       </a>
@@ -379,7 +366,7 @@ export default function AuthorsFetcher() {
                         href={selectedProfile.socialLinks.facebook}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                        className="px-4 py-2 bg-primary/20 text-primary border border-primary font-mono text-sm hover:bg-primary hover:text-primary-foreground transition-all duration-200"
                       >
                         Facebook
                       </a>
@@ -389,7 +376,7 @@ export default function AuthorsFetcher() {
                         href={selectedProfile.socialLinks.instagram}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-4 py-2 bg-pink-600 text-white rounded hover:bg-pink-700 transition-colors text-sm"
+                        className="px-4 py-2 bg-secondary/20 text-secondary border border-secondary font-mono text-sm hover:bg-secondary hover:text-secondary-foreground transition-all duration-200"
                       >
                         Instagram
                       </a>
@@ -399,53 +386,79 @@ export default function AuthorsFetcher() {
               )}
 
               {/* Articles */}
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-3">
-                  📚 Articles ({selectedProfile.totalArticles})
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-success mb-4 font-mono flex items-center gap-2">
+                  <span>📚</span> Articles ({selectedProfile.totalArticles})
                 </h3>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
                   {selectedProfile.articles.slice(0, 20).map((article, idx) => (
-                    <div key={idx} className="p-4 bg-muted/50 rounded-lg border border-border hover:bg-muted transition-colors">
-                      <a
-                        href={article.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline font-medium"
-                      >
-                        {article.title}
-                      </a>
-                      <div className="flex gap-4 mt-2 text-xs text-muted-foreground">
-                        {article.section && (
-                          <span className="px-2 py-1 bg-primary/10 text-primary rounded">
-                            {article.section}
-                          </span>
-                        )}
-                        {article.publishDate && (
-                          <span>📅 {article.publishDate}</span>
-                        )}
+                    <a
+                      key={idx}
+                      href={article.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block group"
+                    >
+                      <div className="p-4 bg-muted/30 border border-border hover:border-primary/50 hover:bg-muted/50 transition-all duration-200">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-shrink-0 w-8 h-8 bg-primary/10 border border-primary text-primary flex items-center justify-center font-bold text-sm font-mono">
+                            {idx + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-foreground group-hover:text-primary transition-colors font-mono text-sm leading-relaxed line-clamp-2 mb-2">
+                              {article.title}
+                            </h4>
+                            <div className="flex gap-3 flex-wrap text-xs">
+                              {article.section && (
+                                <span className="px-2 py-1 bg-accent/10 border border-accent/50 text-accent font-mono">
+                                  {article.section}
+                                </span>
+                              )}
+                              {article.publishDate && (
+                                <span className="text-muted-foreground font-mono">📅 {article.publishDate}</span>
+                              )}
+                            </div>
+                          </div>
+                          <svg 
+                            className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all flex-shrink-0" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </div>
                       </div>
-                    </div>
+                    </a>
                   ))}
                 </div>
                 {selectedProfile.totalArticles > 20 && (
-                  <p className="text-sm text-muted-foreground mt-3 text-center">
+                  <p className="text-sm text-muted-foreground mt-3 text-center font-mono">
                     Showing 20 of {selectedProfile.totalArticles} articles
                   </p>
                 )}
               </div>
 
               {/* Database Info */}
-              <div className="bg-muted/30 p-4 rounded-lg border border-border">
-                <h3 className="text-sm font-semibold text-foreground mb-2">💾 Database Info</h3>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="text-muted-foreground">Status:</div>
-                  <div className="text-green-600 font-semibold">✅ Saved to MongoDB</div>
+              <div className="p-4 bg-muted/30 border-2 border-success/30">
+                <h3 className="text-sm font-semibold text-success mb-3 font-mono flex items-center gap-2">
+                  <span>💾</span> Database Info
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm font-mono">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Status:</span>
+                    <span className="text-success font-semibold">✅ Saved</span>
+                  </div>
                   
-                  <div className="text-muted-foreground">Scraped At:</div>
-                  <div>{new Date(selectedProfile.scrapedAt).toLocaleString()}</div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Scraped:</span>
+                    <span className="text-foreground">{new Date(selectedProfile.scrapedAt).toLocaleDateString()}</span>
+                  </div>
                   
-                  <div className="text-muted-foreground">Profile ID:</div>
-                  <div className="font-mono text-xs">{selectedProfile._id}</div>
+                  <div className="flex justify-between col-span-1 md:col-span-2">
+                    <span className="text-muted-foreground">ID:</span>
+                    <span className="text-foreground text-xs break-all">{selectedProfile._id}</span>
+                  </div>
                 </div>
               </div>
             </div>

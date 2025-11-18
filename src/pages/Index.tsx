@@ -13,7 +13,7 @@ import { TopicClusters } from "@/components/TopicClusters";
 import { Footer } from "@/components/Footer";
 import AuthorsFetcher from "@/components/AuthorsFetcher";
 import { generateMockJournalists, generateGraphData } from "@/utils/mockData";
-import { GraphData, Journalist, Node } from "@/types/journalist";
+import type { GraphData, Journalist, Node } from "@/types/journalist";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
 
@@ -24,6 +24,8 @@ const Index = () => {
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [outlets, setOutlets] = useState<string[]>([]);
   const [topJournalists, setTopJournalists] = useState<Journalist[]>([]);
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
+  const [selectedOutlets, setSelectedOutlets] = useState<string[]>([]);
   const graphRef = useRef<HTMLDivElement>(null);
 
   const topics = [
@@ -78,20 +80,31 @@ const Index = () => {
 
   // ---------------- Fetch outlets ----------------
   const fetchOutlets = async () => {
-    const urls = ["http://localhost:5003/outlets", "https://aten-131r.onrender.com/outlets"];
+    const urls = [
+      "http://localhost:5002/api/authors/profiles",
+      "https://aten-131r.onrender.com/api/authors/profiles"
+    ];
+    
     for (const url of urls) {
       try {
-        const res = await axios.get(url);
-        setOutlets(res.data);
-        break;
-      } catch {}
+        const res = await axios.get(url, { timeout: 5000 });
+        const profiles = res.data.profiles || res.data || [];
+        // Extract unique outlets from author profiles
+        const uniqueOutlets = [...new Set(profiles.map((p: any) => p.outlet).filter(Boolean))] as string[];
+        if (uniqueOutlets.length > 0) {
+          setOutlets(uniqueOutlets);
+          break;
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch outlets from ${url}`);
+      }
     }
   };
 
   // ---------------- Fetch top journalists ----------------
   const fetchTopJournalists = async () => {
     const urls = [
-      "http://localhost:5003/top-journalists",
+      "http://localhost:5002/top-journalists",
       "https://aten-131r.onrender.com/top-journalists",
     ];
 
@@ -115,6 +128,9 @@ const Index = () => {
 
   // ---------------- Filters ----------------
   const handleFilterChange = (filters: { topics: string[]; outlets: string[] }) => {
+    setSelectedTopics(filters.topics);
+    setSelectedOutlets(filters.outlets);
+    
     if (filters.topics.length === 0 && filters.outlets.length === 0) {
       setFilteredData(graphData);
       setSelectedTopic(null);
@@ -195,17 +211,14 @@ const Index = () => {
             </div>
 
             <div className="bg-muted border border-primary/20 h-[800px] relative overflow-hidden">
-              <NetworkGraph data={filteredData} />
+              <NetworkGraph 
+                selectedTopics={selectedTopics}
+                selectedOutlets={selectedOutlets}
+              />
             </div>
 
             <div className="space-y-6">
-              <TopInfluencers
-                journalists={
-                  topJournalists.length ? topJournalists : graphData.nodes
-                    .filter((n) => n.group === "author")
-                    .map((n) => n.journalist!)
-                }
-              />
+              <TopInfluencers />
               <ActivityFeed />
             </div>
           </div>

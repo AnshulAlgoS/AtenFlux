@@ -5,6 +5,8 @@ import axios from "axios";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { ParticleBackground } from "@/components/ParticleBackground";
+import { NetworkGraph } from "@/components/NetworkGraph";
+import { FiltersPanel } from "@/components/FiltersPanel";
 import { Card } from "@/components/ui/card";
 import { Tag } from "lucide-react";
 
@@ -38,10 +40,18 @@ interface Topic {
 
 const Topics = () => {
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [outlets, setOutlets] = useState<string[]>([]);
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
+  const [selectedOutlets, setSelectedOutlets] = useState<string[]>([]);
+
+  const handleFilterChange = (filters: { topics: string[]; outlets: string[] }) => {
+    setSelectedTopics(filters.topics);
+    setSelectedOutlets(filters.outlets);
+  };
 
   useEffect(() => {
     const fetchTopics = async () => {
-      const urls = ["http://localhost:5003/topics", "https://aten-131r.onrender.com/topics"];
+      const urls = ["http://localhost:5002/topics", "https://aten-131r.onrender.com/topics"];
       let data: Topic[] | null = null;
 
       for (const url of urls) {
@@ -69,7 +79,29 @@ const Topics = () => {
       }
     };
 
+    const fetchOutlets = async () => {
+      const urls = [
+        "http://localhost:5002/api/authors/profiles",
+        "https://aten-131r.onrender.com/api/authors/profiles"
+      ];
+      
+      for (const url of urls) {
+        try {
+          const res = await axios.get(url, { timeout: 5000 });
+          const profiles = res.data.profiles || res.data || [];
+const uniqueOutlets = [...new Set(profiles.map((p: any) => p.outlet).filter(Boolean))] as string[];
+          if (uniqueOutlets.length > 0) {
+            setOutlets(uniqueOutlets);
+            break;
+          }
+        } catch (err) {
+          console.warn(`Failed to fetch outlets from ${url}`);
+        }
+      }
+    };
+
     fetchTopics();
+    fetchOutlets();
   }, []);
 
   return (
@@ -78,58 +110,81 @@ const Topics = () => {
       <Header />
 
       <main className="pt-32 pb-20 px-6 relative z-10">
-        <div className="container mx-auto max-w-6xl">
+        <div className="container mx-auto max-w-7xl">
           {/* Hero */}
-          <div className="text-center mb-16">
+          <div className="text-center mb-12">
             <div className="flex items-center justify-center gap-3 mb-4">
               <Tag className="text-primary w-12 h-12" />
               <h1 className="text-5xl font-bold font-mono text-foreground">
-                Topic <span className="text-primary">Clusters</span>
+                Topic <span className="text-primary">Network</span>
               </h1>
             </div>
             <p className="text-xl text-muted-foreground font-mono">
-              Explore journalism by subject area
+              Explore journalist-topic relationships and filter by outlet
             </p>
           </div>
 
+          {/* Network Graph with Filters */}
+          <div className="grid lg:grid-cols-[280px_1fr] gap-6 mb-12">
+            <div className="space-y-6">
+              <FiltersPanel
+                topics={TOPICS}
+                outlets={outlets}
+                onFilterChange={handleFilterChange}
+              />
+            </div>
+
+            <div className="bg-muted border border-primary/20 h-[800px] relative overflow-hidden rounded-lg">
+              <NetworkGraph 
+                selectedTopics={selectedTopics}
+                selectedOutlets={selectedOutlets}
+              />
+            </div>
+          </div>
+
           {/* Topics Grid */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {topics.map((topic) => (
-              <Card
-                key={topic.name}
-                className="bg-card border border-card/30 p-6 transition-transform hover:scale-105 cursor-pointer animate-fade-in"
-                style={{ borderColor: `${topic.color}30` }}
-              >
-                <div className="w-full h-2 mb-6 rounded-full" style={{ backgroundColor: topic.color }} />
+          <div className="mt-16">
+            <h2 className="text-3xl font-bold font-mono text-foreground mb-8 text-center">
+              Browse by <span className="text-primary">Topic</span>
+            </h2>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {topics.map((topic) => (
+                <Card
+                  key={topic.name}
+                  className="bg-card border border-card/30 p-6 transition-transform hover:scale-105 cursor-pointer animate-fade-in"
+                  style={{ borderColor: `${topic.color}30` }}
+                >
+                  <div className="w-full h-2 mb-6 rounded-full" style={{ backgroundColor: topic.color }} />
 
-                <h3 className="text-2xl font-bold font-mono text-foreground mb-2">
-                  {topic.name}
-                </h3>
-                <p className="text-sm text-muted-foreground font-mono mb-6 leading-relaxed">
-                  {topic.description}
-                </p>
-
-                <div className="mb-4">
-                  <p className="text-xs text-muted-foreground uppercase font-mono">
-                    Top Journalists
+                  <h3 className="text-2xl font-bold font-mono text-foreground mb-2">
+                    {topic.name}
+                  </h3>
+                  <p className="text-sm text-muted-foreground font-mono mb-6 leading-relaxed">
+                    {topic.description}
                   </p>
-                  {topic.topJournalists?.map((j, idx) => (
-                    <p key={idx} className="text-sm font-mono text-foreground">
-                      • {j.name} ({j.outlet}) - {j.articleCount || 0} articles
+
+                  <div className="mb-4">
+                    <p className="text-xs text-muted-foreground uppercase font-mono">
+                      Top Journalists
                     </p>
-                  ))}
-                </div>
+                    {topic.topJournalists?.map((j, idx) => (
+                      <p key={idx} className="text-sm font-mono text-foreground">
+                        • {j.name} ({j.outlet}) - {j.articleCount || 0} articles
+                      </p>
+                    ))}
+                  </div>
 
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase font-mono">
-                    Total Journalists
-                  </p>
-                  <p className="text-2xl font-bold font-mono" style={{ color: topic.color }}>
-                    {topic.journalistCount || 0}
-                  </p>
-                </div>
-              </Card>
-            ))}
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase font-mono">
+                      Total Journalists
+                    </p>
+                    <p className="text-2xl font-bold font-mono" style={{ color: topic.color }}>
+                      {topic.journalistCount || 0}
+                    </p>
+                  </div>
+                </Card>
+              ))}
+            </div>
           </div>
         </div>
       </main>

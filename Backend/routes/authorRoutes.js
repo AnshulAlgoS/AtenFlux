@@ -70,18 +70,57 @@ router.post("/discover-and-scrape", async (req, res) => {
           authorsFound: result.authorsCount 
         });
 
+        // DEBUG: Log what we received
+        console.log(`\n🔍 DEBUG: Scraper result structure:`);
+        console.log(`   - result.authorsCount: ${result.authorsCount}`);
+        console.log(`   - result.authors exists: ${!!result.authors}`);
+        console.log(`   - result.authors length: ${result.authors?.length}`);
+        if (result.authors && result.authors.length > 0) {
+          console.log(`   - First author sample:`, {
+            name: result.authors[0].name,
+            outlet: result.authors[0].outlet,
+            totalArticles: result.authors[0].totalArticles,
+            topics: result.authors[0].topics?.length,
+            hasArticlesArray: !!result.authors[0].articles
+          });
+        }
+
         // Save all authors and their profiles to MongoDB
         const savedProfiles = [];
         
+        // Normalize outlet name for consistency (lowercase, trimmed)
+        const normalizedOutlet = result.outlet.toLowerCase().trim();
+        
+        if (!result.authors || result.authors.length === 0) {
+          console.error(`❌ No authors data to save! Result structure:`, Object.keys(result));
+          jobs.set(jobId, {
+            ...jobs.get(jobId),
+            status: 'completed',
+            progress: 100,
+            message: 'Scraping completed but no authors were saved',
+            authorsFound: result.authorsCount || 0,
+            authorsSaved: 0,
+            error: 'No author data returned from scraper'
+          });
+          return;
+        }
+        
         for (const authorData of result.authors) {
           try {
-            // Save to AuthorProfile collection
+            // DEBUG: Log what we're about to save
+            console.log(`\n💾 Saving author: ${authorData.name}`);
+            console.log(`   Topics: ${JSON.stringify(authorData.topics)}`);
+            console.log(`   Keywords: ${JSON.stringify(authorData.keywords?.slice(0, 5))}`);
+            console.log(`   Influence: ${authorData.influenceScore}`);
+            console.log(`   Total Articles: ${authorData.totalArticles}`);
+            
+            // Use profileLink as the unique identifier (it has unique index)
             const profile = await AuthorProfile.findOneAndUpdate(
-              { name: authorData.name, outlet: result.outlet },
+              { profileLink: authorData.profileUrl },
               {
                 $set: {
                   name: authorData.name,
-                  outlet: result.outlet,
+                  outlet: normalizedOutlet, // Use normalized outlet name
                   profileLink: authorData.profileUrl,
                   profilePic: authorData.profilePicture,
                   bio: authorData.bio,
@@ -92,6 +131,9 @@ router.post("/discover-and-scrape", async (req, res) => {
                   articleLinks: authorData.articles.map(a => a.url),
                   articleData: authorData.articles,
                   latestArticle: authorData.articles[0] || null,
+                  topics: authorData.topics || [],
+                  keywords: authorData.keywords || [],
+                  influence: authorData.influenceScore || 0,
                   scrapedAt: new Date()
                 }
               },
@@ -100,11 +142,11 @@ router.post("/discover-and-scrape", async (req, res) => {
 
             // Also save to Author collection for backwards compatibility
             await Author.findOneAndUpdate(
-              { name: authorData.name, outlet: result.outlet },
+              { profileLink: authorData.profileUrl },
               {
                 $set: {
                   name: authorData.name,
-                  outlet: result.outlet,
+                  outlet: normalizedOutlet, // Use normalized outlet name
                   profileLink: authorData.profileUrl,
                   updatedAt: new Date()
                 }
@@ -113,6 +155,7 @@ router.post("/discover-and-scrape", async (req, res) => {
             );
 
             savedProfiles.push(profile);
+            console.log(`✅ Saved/Updated: ${authorData.name} (${profile.topics?.length || 0} topics, ${profile.keywords?.length || 0} keywords)`);
           } catch (saveErr) {
             console.error(`❌ Error saving ${authorData.name}:`, saveErr.message);
           }

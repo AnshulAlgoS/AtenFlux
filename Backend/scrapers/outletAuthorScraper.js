@@ -1,23 +1,122 @@
 import puppeteer from "puppeteer";
 import dotenv from "dotenv";
+import { analyzeArticleTitles, categorizeTopics, extractKeywords, calculateInfluence } from "../utils/nlpAnalyzer.js";
 
 dotenv.config();
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ============================================================
-// STEP 1: AUTO-DETECT OUTLET WEBSITE
+// UNIVERSAL INTELLIGENT SCRAPER - NO HARDCODED URLS
+// Discovers outlet structure and authors dynamically
 // ============================================================
 
 /**
- * Automatically detect the official website of a media outlet
- * Uses multiple strategies - NO hardcoded domains!
+ * Main scraping function - fully dynamic and adaptive
  */
-async function detectOutletWebsite(outletName, browser) {
-  console.log(`\n${'='.repeat(70)}`);
-  console.log(`🔍 AUTO-DETECTING WEBSITE: ${outletName}`);
-  console.log('='.repeat(70));
+export async function scrapeOutletIntelligent(outletName, maxAuthors = 50) {
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`🚀 INTELLIGENT UNIVERSAL SCRAPER`);
+  console.log(`📰 Outlet: ${outletName}`);
+  console.log(`👥 Target: ${maxAuthors} authors minimum`);
+  console.log(`${'='.repeat(80)}\n`);
 
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized'],
+    defaultViewport: null,
+    protocolTimeout: 180000,
+  });
+
+  try {
+    // Step 1: Discover outlet website automatically
+    const website = await detectOutletWebsite(outletName, browser);
+    
+    if (!website) {
+      throw new Error(`Could not detect website for outlet: ${outletName}`);
+    }
+
+    console.log(`✅ Detected website: ${website}\n`);
+
+    // Step 2: Analyze outlet structure and discover authors
+    const authors = await discoverAuthorsIntelligently(website, outletName, browser, maxAuthors);
+
+    if (authors.length === 0) {
+      console.log(`\n❌ No authors discovered for ${outletName}`);
+      await browser.close();
+      return { error: 'No authors found', outlet: outletName, website };
+    }
+
+    // Step 3: Extract detailed data for each author
+    console.log(`\n\n${'='.repeat(80)}`);
+    console.log(`📊 EXTRACTING DATA FOR ${authors.length} AUTHORS`);
+    console.log('='.repeat(80));
+
+    const results = [];
+    const PARALLEL_LIMIT = 2;
+
+    for (let i = 0; i < authors.length; i += PARALLEL_LIMIT) {
+      const batch = authors.slice(i, Math.min(i + PARALLEL_LIMIT, authors.length));
+
+      console.log(`\n[${'='.repeat(76)}]`);
+      console.log(`  Batch ${Math.floor(i / PARALLEL_LIMIT) + 1} (Authors ${i + 1}-${Math.min(i + PARALLEL_LIMIT, authors.length)} of ${authors.length})`);
+      console.log(`[${'='.repeat(76)}]`);
+
+      const batchPromises = batch.map(async (author, batchIdx) => {
+        const authorNum = i + batchIdx + 1;
+        console.log(`\n  [${authorNum}/${authors.length}] Processing: ${author.name}`);
+
+        const data = await extractAuthorData(author, outletName, browser, website);
+
+        if (data) {
+          console.log(`  [${authorNum}/${authors.length}] ✅ Done: ${author.name} (${data.totalArticles} articles)`);
+          return data;
+        } else {
+          console.log(`  [${authorNum}/${authors.length}] ⚠️  Skipped: ${author.name}`);
+          return null;
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults.filter(r => r !== null));
+
+      if (i + PARALLEL_LIMIT < authors.length) {
+        await delay(1000);
+      }
+    }
+
+    await browser.close();
+
+    console.log(`\n\n${'='.repeat(80)}`);
+    console.log(`✅ SCRAPING COMPLETE`);
+    console.log('='.repeat(80));
+    console.log(`📰 Outlet: ${outletName}`);
+    console.log(`🌐 Website: ${website}`);
+    console.log(`👥 Authors Extracted: ${results.length}/${authors.length}`);
+    console.log(`📝 Total Articles: ${results.reduce((sum, r) => sum + r.totalArticles, 0)}`);
+    console.log('='.repeat(80));
+
+    return {
+      outlet: outletName,
+      website: website,
+      authorsCount: results.length,
+      authors: results
+    };
+
+  } catch (err) {
+    console.error(`\n❌ Fatal error: ${err.message}`);
+    await browser.close();
+    return { error: err.message, outlet: outletName };
+  }
+}
+
+// ============================================================
+// AUTO-DETECT OUTLET WEBSITE
+// ============================================================
+
+async function detectOutletWebsite(outletName, browser) {
+  console.log(`\n🔍 Detecting website for: ${outletName}...`);
+  
   const page = await browser.newPage();
   await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
 
@@ -28,12 +127,12 @@ async function detectOutletWebsite(outletName, browser) {
     try {
       await page.goto(`https://duckduckgo.com/?q=${encodeURIComponent(outletName + ' news india official website')}`, {
         waitUntil: 'networkidle2',
-        timeout: 12000 // Reduced from 15s to 12s
+        timeout: 12000
       });
-      await delay(1500); // Reduced delay
+      await delay(1500);
 
       const ddgWebsite = await page.evaluate(() => {
-        const results = document.querySelectorAll('a[data-testid="result-title-a"], article a');
+        const results = document.querySelectorAll('a[data-testid="result-title-a"], article a, .result__a');
         
         for (const link of results) {
           const href = link.href;
@@ -59,7 +158,7 @@ async function detectOutletWebsite(outletName, browser) {
       });
 
       if (ddgWebsite) {
-        console.log(`  ✅ Found via DuckDuckGo: ${ddgWebsite}\n`);
+        console.log(`  ✅ Found via DuckDuckGo: ${ddgWebsite}`);
         await page.close();
         return ddgWebsite;
       }
@@ -71,20 +170,20 @@ async function detectOutletWebsite(outletName, browser) {
     console.log(`  📍 Strategy 2: Searching Google...`);
     
     try {
-      await page.goto(`https://www.google.com/search?q=${encodeURIComponent(outletName + ' news newspaper india official website')}`, {
+      await page.goto(`https://www.google.com/search?q=${encodeURIComponent(outletName + ' news india official website')}`, {
         waitUntil: 'networkidle2',
-        timeout: 12000 // Reduced from 15s to 12s
+        timeout: 12000
       });
-      await delay(1500); // Reduced delay
+      await delay(1500);
 
       const googleWebsite = await page.evaluate(() => {
-        const resultSelectors = [
-          'div.yuRUbf > div > a',
+        const selectors = [
           'div.yuRUbf > a',
+          'div.yuRUbf > div > a',
           'a[href^="http"]'
         ];
         
-        for (const selector of resultSelectors) {
+        for (const selector of selectors) {
           const links = document.querySelectorAll(selector);
           
           for (const link of links) {
@@ -116,7 +215,7 @@ async function detectOutletWebsite(outletName, browser) {
       });
 
       if (googleWebsite) {
-        console.log(`  ✅ Found via Google: ${googleWebsite}\n`);
+        console.log(`  ✅ Found via Google: ${googleWebsite}`);
         await page.close();
         return googleWebsite;
       }
@@ -130,9 +229,9 @@ async function detectOutletWebsite(outletName, browser) {
     try {
       await page.goto(`https://www.bing.com/search?q=${encodeURIComponent(outletName + ' news india official')}`, {
         waitUntil: 'networkidle2',
-        timeout: 12000 // Reduced from 15s to 12s
+        timeout: 12000
       });
-      await delay(1000); // Reduced delay
+      await delay(1000);
 
       const bingWebsite = await page.evaluate(() => {
         const links = document.querySelectorAll('li.b_algo a, h2 a');
@@ -156,7 +255,7 @@ async function detectOutletWebsite(outletName, browser) {
       });
 
       if (bingWebsite) {
-        console.log(`  ✅ Found via Bing: ${bingWebsite}\n`);
+        console.log(`  ✅ Found via Bing: ${bingWebsite}`);
         await page.close();
         return bingWebsite;
       }
@@ -186,7 +285,7 @@ async function detectOutletWebsite(outletName, browser) {
         console.log(`    Testing: ${testUrl}`);
         const response = await page.goto(testUrl, { 
           waitUntil: 'domcontentloaded', 
-          timeout: 8000 // Reduced from 10s to 8s
+          timeout: 8000 
         });
         
         if (response && response.ok() && response.status() === 200) {
@@ -203,7 +302,7 @@ async function detectOutletWebsite(outletName, browser) {
           });
           
           if (isNews) {
-            console.log(`  ✅ Found via URL construction: ${testUrl}\n`);
+            console.log(`  ✅ Found via URL construction: ${testUrl}`);
             await page.close();
             return testUrl;
           }
@@ -214,7 +313,7 @@ async function detectOutletWebsite(outletName, browser) {
       }
     }
 
-    console.log(`  ❌ Could not detect website for "${outletName}"\n`);
+    console.log(`  ❌ Could not detect website for "${outletName}"`);
     await page.close();
     return null;
 
@@ -226,317 +325,80 @@ async function detectOutletWebsite(outletName, browser) {
 }
 
 // ============================================================
-// STEP 2: DISCOVER AUTHORS FROM OUTLET
+// INTELLIGENTLY DISCOVER AUTHORS
 // ============================================================
 
-/**
- * Automatically discover JOURNALISTS from the outlet's website
- * Strategy: Find recent articles, visit them, extract author bylines
- * This ensures we get REAL journalists, not random users
- */
-async function discoverAuthors(outletWebsite, outletName, browser, limit = 30) {
+async function discoverAuthorsIntelligently(website, outletName, browser, limit) {
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`👥 DISCOVERING JOURNALISTS: ${outletName}`);
+  console.log(`👥 DISCOVERING AUTHORS INTELLIGENTLY`);
+  console.log(`🎯 Target: ${limit} unique journalists`);
   console.log('='.repeat(70));
 
+  const authorsMap = new Map();
   const page = await browser.newPage();
   await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
 
   try {
-    console.log(`  📍 Step 1: Finding recent articles on homepage...`);
-    await page.goto(outletWebsite, { 
-      waitUntil: 'networkidle2', 
-      timeout: 20000 
+    // Strategy 1: Check for RSS feeds
+    console.log(`\n📡 Strategy 1: Checking for RSS feeds...`);
+    const rssAuthors = await discoverFromRSS(website, page, limit);
+    rssAuthors.forEach(author => {
+      if (!authorsMap.has(author.name.toLowerCase())) {
+        authorsMap.set(author.name.toLowerCase(), author);
+      }
     });
-    await delay(1500); // Reduced delay
+    console.log(`  ✓ Found ${rssAuthors.length} authors from RSS`);
 
-    // Scroll to load more articles
-    for (let i = 0; i < 10; i++) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await delay(600); // Reduced delay
+    // Strategy 2: Find and scrape author directory pages
+    if (authorsMap.size < limit) {
+      console.log(`\n📄 Strategy 2: Looking for author directory...`);
+      const dirAuthors = await discoverFromAuthorDirectory(website, page, limit);
+      dirAuthors.forEach(author => {
+        if (!authorsMap.has(author.name.toLowerCase()) && authorsMap.size < limit) {
+          authorsMap.set(author.name.toLowerCase(), author);
+        }
+      });
+      console.log(`  ✓ Found ${dirAuthors.length} authors from directory`);
     }
 
-    // Extract article URLs from homepage
-    const articleUrls = await page.evaluate(() => {
-      const articles = new Set();
-      const allLinks = Array.from(document.querySelectorAll('a[href]'));
+    // Strategy 3: Discover section pages and scrape them
+    if (authorsMap.size < limit) {
+      console.log(`\n📰 Strategy 3: Discovering section pages...`);
+      const sections = await discoverSectionPages(website, page);
+      console.log(`  ✓ Found ${sections.length} sections`);
       
-      for (const link of allLinks) {
-        const href = link.href;
+      for (const sectionUrl of sections) {
+        if (authorsMap.size >= limit) break;
         
-        // Skip non-article links
-        if (!href || href === '#') continue;
-        if (href.includes('/tag/') || href.includes('/category/') || href.includes('/section/')) continue;
-        if (href.includes('/author/') || href.includes('/user/') || href.includes('/profile/')) continue;
-        if (href.includes('facebook') || href.includes('twitter') || href.includes('youtube')) continue;
+        console.log(`  📍 Scraping section: ${sectionUrl.split('/').pop() || 'homepage'}`);
+        const sectionAuthors = await scrapeArticlesFromPage(sectionUrl, page, limit - authorsMap.size);
         
-        // NEW: Skip RSS feeds, video pages, galleries, live blogs, and listings
-        if (href.includes('/rss.') || href.includes('.rss')) continue;
-        if (href.includes('/videos/') || href.includes('/video/')) continue;
-        if (href.includes('/photos/') || href.includes('/photo/') || href.includes('/photogallery/')) continue;
-        if (href.includes('/liveblog/') || href.includes('/live-')) continue;
-        if (href.includes('/trending-') || href.includes('/popular-') || href.includes('/latest-')) continue;
-        if (href.includes('/city/') && !href.match(/\/city\/[^/]+\/.*-\d{8}/)) continue; // City pages without article IDs
-        
-        // NEW: Skip state/region pages and election section pages
-        if (href.includes('/elections/') && !href.match(/-\d{8,}/)) continue;
-        if (href.match(/\/(india|world|business|sports|entertainment|lifestyle|tech)\/[a-z-]+$/) && !href.match(/-\d{8,}/)) continue;
-        
-        try {
-          const url = new URL(href);
-          if (url.hostname !== window.location.hostname) continue;
-          
-          const pathname = url.pathname;
-          
-          // STRICTER: Must have a clear article pattern
-          const isArticle = 
-            /\/\d{4}\/\d{1,2}\/\d{1,2}\/.+/.test(pathname) || // Date-based URL with content after date
-            /\/\d{4}-\d{2}-\d{2}\/.+/.test(pathname) || // Alternative date format
-            /\/articleshow\/\d+/.test(pathname) || // Times of India article pattern
-            /-\d{8,}\.cms$/.test(pathname) || // Times of India CMS pattern with article ID
-            /-\d{8,}$/.test(pathname) || // Article ID at end
-            /\d{8,}\.html/.test(pathname) || // HTML with article ID
-            /\.(html|ece|aspx)\?.*id=\d+/.test(pathname) || // Query param with ID
-            (/\/(article|story|news|post|web-stories)\//i.test(pathname) && pathname.split('/').length >= 4); // Article path with depth
-          
-          // Additional validation: URL should have some content (not just section pages)
-          const pathParts = pathname.split('/').filter(p => p);
-          const hasEnoughDepth = pathParts.length >= 3;
-          const lastPart = pathParts[pathParts.length - 1];
-          const hasArticleId = /\d{6,}/.test(lastPart) || lastPart.includes('-') && lastPart.length > 15;
-          
-          if (isArticle && hasEnoughDepth && hasArticleId) {
-            articles.add(href);
-            if (articles.size >= 50) break; // Limit to 50 articles to check
+        sectionAuthors.forEach(author => {
+          if (!authorsMap.has(author.name.toLowerCase()) && authorsMap.size < limit) {
+            authorsMap.set(author.name.toLowerCase(), author);
           }
-        } catch (e) {}
-      }
-      
-      return Array.from(articles);
-    });
-
-    console.log(`  ✓ Found ${articleUrls.length} articles to check for authors`);
-
-    // Visit each article and extract author information
-    console.log(`  📍 Step 2: Extracting authors from article bylines...`);
-    
-    const authorsMap = new Map();
-    let checkedArticles = 0;
-    
-    for (const articleUrl of articleUrls) {
-      if (authorsMap.size >= limit) {
-        console.log(`  ✓ Reached ${limit} unique authors, stopping...`);
-        break;
-      }
-      
-      if (checkedArticles >= 50) {
-        console.log(`  ✓ Checked 50 articles, stopping...`);
-        break;
-      }
-      
-      try {
-        checkedArticles++;
-        
-        await page.goto(articleUrl, { 
-          waitUntil: 'domcontentloaded', 
-          timeout: 8000 // Reduced from 10s to 8s
         });
-        await delay(300); // Reduced delay
-
-        // Extract author name and profile URL from this article
-        const authorInfo = await page.evaluate(() => {
-          // DEBUG: Log what we're seeing
-          const debug = {
-            url: window.location.href,
-            foundLinks: [],
-            foundText: []
-          };
-          
-          // Look for author links in byline
-          const authorSelectors = [
-            'a[rel="author"]',
-            'a[href*="/author/"]',
-            'a[href*="/user/"]',
-            'a[href*="/profile/"]',
-            'a[href*="/journalist/"]',
-            'a[href*="/writer/"]',
-            'a[href*="/toiagencyfeeds/author-"]', // Times of India specific
-            'a[href*="/authordetail/msid-"]', // Times of India specific
-            '.author-name a',
-            '.byline a',
-            '[class*="author"] a',
-            '[class*="byline"] a',
-            '.story-byline a',
-            '.article-author a',
-            '.writer a',
-            '.reporter a'
-          ];
-          
-          // DEBUG: Check what author-related elements exist
-          const allAuthorElements = document.querySelectorAll('[class*="author"], [class*="byline"], [rel="author"]');
-          debug.foundText.push(`Found ${allAuthorElements.length} author/byline elements`);
-          allAuthorElements.forEach((el, idx) => {
-            if (idx < 3) { // Log first 3
-              debug.foundText.push(`  Element ${idx}: ${el.tagName} class="${el.className}" text="${el.textContent?.substring(0, 50)}"`);
-            }
-          });
-          
-          for (const selector of authorSelectors) {
-            const links = document.querySelectorAll(selector);
-            
-            for (const link of links) {
-              const name = link.textContent?.trim();
-              const href = link.href;
-              
-              // DEBUG: Log what we found
-              debug.foundLinks.push({ selector, name, href });
-              
-              // Validate name
-              if (!name || name.length < 3 || name.length > 50) continue;
-              if (/^\d+$/.test(name)) continue;
-              if (name.toLowerCase().includes('admin')) continue;
-              
-              // Reject common UI elements and invalid names
-              const invalidPatterns = [
-                /^(edit|view|read|click|share|follow|subscribe|login|sign)/i,
-                /profile$/i,
-                /(more|less|next|previous|back|close|menu|search)$/i,
-                /^(by|posted|written|published)/i
-              ];
-              
-              if (invalidPatterns.some(pattern => pattern.test(name))) continue;
-              
-              // RELAXED: Accept desk names, agencies, and team bylines
-              // Must have at least 2 characters per word on average
-              const words = name.split(/\s+/).filter(w => w.length > 0);
-              if (words.length < 1) continue;
-              
-              // For single-word names, they must be at least 5 characters and look like a name
-              if (words.length === 1) {
-                if (words[0].length < 5) continue;
-                // Single word must start with capital or be uppercase (for acronyms like "PTI", "ANI")
-                if (!/^[A-Z]/.test(words[0])) continue;
-              }
-              
-              // For multi-word names, at least one word should have some capitalization
-              // This allows "TOI Tech Desk", "PTI", "ANI", etc.
-              const hasSomeCapitalization = words.some(word => /[A-Z]/.test(word));
-              if (!hasSomeCapitalization) continue;
-              
-              // Validate URL - must be author/user/profile link
-              if (!href || href === '#') continue;
-              if (!href.includes('/author/') && !href.includes('/user/') && 
-                  !href.includes('/profile/') && !href.includes('/journalist/') &&
-                  !href.includes('/writer/')) continue;
-              
-              return { name, profileUrl: href, source: 'link', debug };
-            }
-          }
-          
-          // NEW: Fallback - Look for author name without link and try to construct profile URL
-          const bylineTextSelectors = [
-            '.author-name',
-            '.byline',
-            '[class*="author"]',
-            '[class*="byline"]',
-            '.story-byline',
-            '.writer',
-            '.reporter',
-            '.contributor',
-            '[class*="writer"]',
-            '[class*="reporter"]',
-            'meta[name="author"]',
-            'meta[property="author"]',
-            'meta[name="article:author"]',
-            '[itemprop="author"]',
-            '[itemprop="author"] [itemprop="name"]'
-          ];
-          
-          for (const selector of bylineTextSelectors) {
-            const el = document.querySelector(selector);
-            if (!el) continue;
-            
-            const authorName = (el.textContent || el.getAttribute('content') || '').trim();
-            
-            // DEBUG
-            debug.foundText.push(`Checking selector "${selector}": "${authorName}"`);
-            
-            // Clean up "By Author Name" format
-            const cleanName = authorName.replace(/^(by|written by|author:?)\s+/i, '').trim();
-            
-            if (!cleanName || cleanName.length < 3 || cleanName.length > 50) continue;
-            
-            // STRICT validation: Reject dates, times, and non-names
-            // Reject if contains date patterns
-            if (/\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(cleanName)) continue;
-            if (/\d{4}/.test(cleanName)) continue; // Contains year
-            if (/\d{1,2}:\d{2}/.test(cleanName)) continue; // Contains time HH:MM
-            if (/\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/.test(cleanName)) continue; // Date format
-            
-            // Reject if mostly numbers
-            const numCount = (cleanName.match(/\d/g) || []).length;
-            if (numCount > cleanName.length * 0.3) continue; // More than 30% digits
-            
-            // Must have at least 2 words (first + last name)
-            const words = cleanName.split(/\s+/).filter(w => w.length > 1);
-            if (words.length < 2) continue;
-            
-            // Each word should start with a capital letter (proper name format)
-            const allWordsCapitalized = words.every(word => /^[A-Z]/.test(word));
-            if (!allWordsCapitalized) continue;
-            
-            // Reject if contains common non-name words
-            const nonNameWords = ['updated', 'published', 'posted', 'edited', 'am', 'pm', 'ist', 'gmt'];
-            if (nonNameWords.some(word => cleanName.toLowerCase().includes(word))) continue;
-            
-            // Try to construct profile URL
-            const slug = cleanName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-            const baseUrl = window.location.origin;
-            
-            // Try common patterns
-            const possibleUrls = [
-              `${baseUrl}/author/${slug}`,
-              `${baseUrl}/authors/${slug}`,
-              `${baseUrl}/profile/${slug}`,
-              `${baseUrl}/user/${slug}`
-            ];
-            
-            return { name: cleanName, profileUrl: possibleUrls[0], source: 'constructed', debug };
-          }
-          
-          // DEBUG: Return debug info even if no author found
-          return { debug };
-        });
-
-        // Log debug info for first 3 articles
-        if (checkedArticles <= 3 && authorInfo?.debug) {
-          console.log(`\n  🔍 DEBUG Article ${checkedArticles}:`);
-          console.log(`     URL: ${authorInfo.debug.url}`);
-          if (authorInfo.debug.foundText.length > 0) {
-            console.log(`     Text elements:`, authorInfo.debug.foundText.slice(0, 5));
-          }
-          if (authorInfo.debug.foundLinks.length > 0) {
-            console.log(`     Link elements:`, authorInfo.debug.foundLinks.slice(0, 3));
-          }
-        }
-
-        if (authorInfo && authorInfo.name && !authorsMap.has(authorInfo.name)) {
-          authorsMap.set(authorInfo.name, authorInfo);
-          console.log(`  ✓ [${authorsMap.size}/${limit}] Found: ${authorInfo.name} (${authorInfo.source})`);
-        }
-
-      } catch (err) {
-        // Skip articles that fail to load
-        continue;
       }
+      console.log(`  ✓ Total after sections: ${authorsMap.size} authors`);
     }
+
+    // Strategy 4: Scrape homepage articles
+    if (authorsMap.size < limit) {
+      console.log(`\n🏠 Strategy 4: Scraping homepage articles...`);
+      const homeAuthors = await scrapeArticlesFromPage(website, page, limit - authorsMap.size);
+      homeAuthors.forEach(author => {
+        if (!authorsMap.has(author.name.toLowerCase()) && authorsMap.size < limit) {
+          authorsMap.set(author.name.toLowerCase(), author);
+        }
+      });
+      console.log(`  ✓ Found ${homeAuthors.length} authors from homepage`);
+    }
+
+    await page.close();
 
     const uniqueAuthors = Array.from(authorsMap.values());
-    
-    console.log(`  ✅ Total unique journalists discovered: ${uniqueAuthors.length}`);
-    console.log(`     (Checked ${checkedArticles} articles)`);
-    
-    await page.close();
+    console.log(`\n  ✅ Total unique journalists discovered: ${uniqueAuthors.length}`);
+
     return uniqueAuthors;
 
   } catch (err) {
@@ -547,420 +409,839 @@ async function discoverAuthors(outletWebsite, outletName, browser, limit = 30) {
 }
 
 // ============================================================
-// STEP 3: EXTRACT AUTHOR DATA
+// DISCOVER AUTHORS FROM RSS FEEDS
 // ============================================================
 
-/**
- * Extract comprehensive author data from their profile
- */
-async function extractAuthorData(author, outletName, browser) {
-  console.log(`\n${'='.repeat(70)}`);
-  console.log(`📝 EXTRACTING DATA: ${author.name}`);
-  console.log('='.repeat(70));
-
-  const page = await browser.newPage();
-  await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
-
-  try {
-    console.log(`  🔗 Loading profile: ${author.profileUrl}`);
-    await page.goto(author.profileUrl, { 
-      waitUntil: 'networkidle2', 
-      timeout: 20000 
-    });
-    await delay(1500); // Reduced delay
-
-    // Extract profile metadata
-    const profileData = await page.evaluate((authorName) => {
-      const data = {
-        bio: null,
-        role: null,
-        email: null,
-        socialLinks: {},
-        profilePicture: null
-      };
+async function discoverFromRSS(website, page, limit) {
+  const authors = [];
+  
+  // Common RSS paths to try
+  const rssPaths = ['/rss', '/rss.xml', '/feed', '/feed.xml', '/feeds/rss', 
+                    '/rssfeeds', '/?feed=rss', '/index.xml', '/feeds/news.xml'];
+  
+  for (const path of rssPaths) {
+    try {
+      const rssUrl = website + path;
+      await page.goto(rssUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
       
-      // Extract bio - MORE selectors
-      const bioSelectors = [
-        '.bio', '.author-bio', '.profile-bio', '.description', '.about',
-        '[itemprop="description"]', '.author-description', '.author-info',
-        '.profile-description', '[class*="bio"]', '[class*="about"]'
-      ];
+      // Check if this is actually an RSS feed
+      const isRSS = await page.evaluate(() => {
+        const text = document.body.textContent;
+        return text.includes('<rss') || text.includes('<feed') || text.includes('<?xml');
+      });
       
-      for (const selector of bioSelectors) {
-        const el = document.querySelector(selector);
-        if (el) {
-          const text = el.textContent?.trim();
-          if (text && text.length > 20 && text.length < 1000) {
-            data.bio = text;
-            break;
+      if (!isRSS) continue;
+      
+      console.log(`    ✓ Found RSS at ${path}`);
+      
+      // Extract article URLs
+      const articleUrls = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('link, guid'));
+        return links
+          .map(el => el.textContent.trim())
+          .filter(url => url && url.startsWith('http'))
+          .slice(0, 50);
+      });
+      
+      // Visit articles to extract authors
+      for (const articleUrl of articleUrls) {
+        if (authors.length >= limit) break;
+        
+        try {
+          await page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
+          await delay(300);
+          
+          const authorInfo = await extractAuthorFromArticle(page, website);
+          if (authorInfo && !authors.find(a => a.name === authorInfo.name)) {
+            authors.push(authorInfo);
           }
+        } catch (e) {
+          continue;
         }
       }
       
-      // Extract role/title
-      const roleSelectors = [
-        '.role', '.title', '.position', '.author-title', '.job-title',
-        '[itemprop="jobTitle"]', '.designation', '.author-role'
-      ];
+      if (authors.length > 0) break; // Found working RSS feed
       
-      for (const selector of roleSelectors) {
-        const el = document.querySelector(selector);
-        if (el) {
-          data.role = el.textContent?.trim();
-          if (data.role) break;
-        }
-      }
+    } catch (e) {
+      continue;
+    }
+  }
+  
+  return authors;
+}
+
+// ============================================================
+// DISCOVER AUTHORS FROM AUTHOR DIRECTORY
+// ============================================================
+
+async function discoverFromAuthorDirectory(website, page, limit) {
+  const authors = [];
+  
+  // Common author directory paths
+  const dirPaths = ['/authors', '/team', '/journalists', '/contributors', '/writers', 
+                    '/our-team', '/people', '/staff', '/about/team', '/editorial-team'];
+  
+  for (const path of dirPaths) {
+    try {
+      const dirUrl = website + path;
+      await page.goto(dirUrl, { waitUntil: 'networkidle2', timeout: 12000 });
       
-      // Extract email - better pattern
-      const emailRegex = /([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/gi;
-      const pageText = document.body.innerText;
-      const emailMatches = pageText.match(emailRegex);
+      // Check if page exists and looks like author directory
+      const isDirectory = await page.evaluate(() => {
+        const text = document.body.textContent.toLowerCase();
+        return (text.includes('author') || text.includes('journalist') || text.includes('writer') || text.includes('team')) &&
+               document.querySelectorAll('a[href*="/author/"], a[href*="/profile/"], a[href*="/journalist/"]').length > 5;
+      });
       
-      if (emailMatches) {
-        // Filter out common false positives
-        const validEmail = emailMatches.find(email => 
-          !email.includes('@example.') &&
-          !email.includes('@test.') &&
-          email.length < 50
-        );
-        if (validEmail) data.email = validEmail;
-      }
+      if (!isDirectory) continue;
       
-      // Extract social media links - ONLY FROM AUTHOR PROFILE SECTION
-      // First, try to find the author's profile container
-      let authorProfileSection = document.querySelector('.author-profile, .profile-section, .author-details, .author-info, .profile-container, [class*="author-"], [class*="profile-"]');
+      console.log(`    ✓ Found author directory at ${path}`);
       
-      // If no specific section found, look for links near the bio/role
-      if (!authorProfileSection) {
-        const bioEl = document.querySelector('.bio, .author-bio, .profile-bio');
-        if (bioEl) {
-          authorProfileSection = bioEl.parentElement || document.body;
-        } else {
-          authorProfileSection = document.body;
-        }
-      }
-      
-      // Now extract social links ONLY from author's section
-      const socialLinksInSection = authorProfileSection.querySelectorAll('a[href]');
-      
-      for (const link of socialLinksInSection) {
-        const href = link.href.toLowerCase();
-        const linkText = link.textContent.toLowerCase();
-        const ariaLabel = (link.getAttribute('aria-label') || '').toLowerCase();
+      // Extract all author profile links
+      const authorLinks = await page.evaluate(() => {
+        const links = [];
+        const anchors = document.querySelectorAll('a[href]');
         
-        // Check if this link is likely the author's personal link
-        // (not outlet's official page or generic share buttons)
-        const isLikelyPersonal = !href.includes('/share') && 
-                                 !href.includes('/sharer') &&
-                                 !href.includes('intent/') &&
-                                 !linkText.includes('follow us') &&
-                                 !linkText.includes('share') &&
-                                 !ariaLabel.includes('share');
-        
-        if (!isLikelyPersonal) continue;
-        
-        if ((href.includes('twitter.com/') || href.includes('x.com/')) && !data.socialLinks.twitter) {
-          const match = href.match(/(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/);
-          if (match && match[1]) {
-            // Exclude generic pages
-            if (!['intent', 'share', 'home', 'explore', 'notifications'].includes(match[1])) {
-              data.socialLinks.twitter = `https://twitter.com/${match[1]}`;
+        for (const a of anchors) {
+          const href = a.href;
+          const text = a.textContent?.trim();
+          
+          if (!href || !text) continue;
+          
+          // Check if URL looks like author profile
+          if (href.includes('/author/') || href.includes('/profile/') || 
+              href.includes('/journalist/') || href.includes('/writer/') || 
+              href.includes('/reporter/')) {
+            
+            // Check if text looks like a person's name
+            if (text.length > 2 && text.length < 50 && 
+                /^[A-Z]/.test(text) && !/^(read|view|more|all|see)/i.test(text)) {
+              links.push({ name: text, profileUrl: href });
             }
           }
-        } else if (href.includes('linkedin.com/in/') && !data.socialLinks.linkedin) {
-          const match = href.match(/linkedin\.com\/in\/([a-zA-Z0-9-]+)/);
-          if (match && match[1]) {
-            data.socialLinks.linkedin = `https://linkedin.com/in/${match[1]}`;
-          }
-        } else if (href.includes('facebook.com/') && !data.socialLinks.facebook) {
-          const match = href.match(/facebook\.com\/([a-zA-Z0-9.]+)/);
-          if (match && match[1] && match[1] !== 'sharer') {
-            data.socialLinks.facebook = `https://facebook.com/${match[1]}`;
-          }
-        } else if (href.includes('instagram.com/') && !data.socialLinks.instagram) {
-          const match = href.match(/instagram\.com\/([a-zA-Z0-9_.]+)/);
-          if (match && match[1] && match[1] !== 'p') {
-            data.socialLinks.instagram = `https://instagram.com/${match[1]}`;
-          }
         }
-      }
-      
-      // Additional validation: Check if extracted username matches or is related to author name
-      // If we found social links, verify they're not the outlet's by checking the username
-      const authorWords = authorName.toLowerCase().split(/\s+/);
-      
-      for (const [platform, url] of Object.entries(data.socialLinks)) {
-        const username = url.split('/').pop().toLowerCase();
         
-        // Skip if username is likely the outlet (contains 'news', 'media', 'times', etc.)
-        const outletKeywords = ['news', 'media', 'times', 'express', 'hindu', 'india', 'daily', 'post', 'tribune'];
-        const isOutletLink = outletKeywords.some(keyword => username.includes(keyword));
-        
-        if (isOutletLink) {
-          // This looks like outlet's official link, remove it
-          delete data.socialLinks[platform];
-        }
-      }
-
-      // Extract profile picture
-      const imgSelectors = [
-        '.profile-image img', '.author-image img', '.avatar img',
-        '.profile-photo img', '[itemprop="image"]', '.author-avatar img',
-        'img[alt*="' + authorName + '"]'
-      ];
+        return links;
+      });
       
-      for (const selector of imgSelectors) {
-        const img = document.querySelector(selector);
-        if (img?.src && !img.src.includes('placeholder') && !img.src.includes('default')) {
-          data.profilePicture = img.src;
-          break;
-        }
-      }
+      console.log(`      Found ${authorLinks.length} author profiles`);
       
-      return data;
-    }, author.name);
-
-    console.log(`  ✓ Bio: ${profileData.bio ? `${profileData.bio.substring(0, 50)}...` : 'Not found'}`);
-    console.log(`  ✓ Role: ${profileData.role || 'Not found'}`);
-    console.log(`  ✓ Email: ${profileData.email || 'Not found'}`);
-    console.log(`  ✓ Social: ${Object.keys(profileData.socialLinks).join(', ') || 'None'}`);
-
-    // Scroll to load articles
-    console.log(`  ⬇️  Scrolling to load articles...`);
-    
-    for (let i = 0; i < 10; i++) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await delay(400); // Reduced delay
+      authorLinks.forEach(author => {
+        if (authors.length < limit && !authors.find(a => a.name === author.name)) {
+          authors.push(author);
+        }
+      });
+      
+      if (authors.length > 0) break; // Found working directory
+      
+    } catch (e) {
+      continue;
     }
+  }
+  
+  return authors;
+}
 
-    await delay(1000);
+// ============================================================
+// DISCOVER SECTION PAGES
+// ============================================================
 
-    // Extract article URLs from profile page
-    const articleUrls = await page.evaluate((profileUrl) => {
-      const urls = new Set();
-      const allLinks = Array.from(document.querySelectorAll('a[href]'));
+async function discoverSectionPages(website, page) {
+  const sections = new Set();
+  
+  try {
+    await page.goto(website, { waitUntil: 'networkidle2', timeout: 15000 });
+    
+    // Extract navigation links that look like sections
+    const sectionUrls = await page.evaluate((baseUrl) => {
+      const urls = [];
+      const links = document.querySelectorAll('nav a, header a, [role="navigation"] a, .menu a');
       
-      for (const link of allLinks) {
+      for (const link of links) {
+        const href = link.href;
+        const text = link.textContent?.trim().toLowerCase();
+        
+        if (!href || !text) continue;
+        
+        // Check if this looks like a section (not homepage, not external)
+        const url = new URL(href);
+        const baseUrlObj = new URL(baseUrl);
+        
+        if (url.hostname !== baseUrlObj.hostname) continue;
+        if (href === baseUrl || href === baseUrl + '/') continue;
+        
+        // Common section keywords
+        const sectionKeywords = ['news', 'business', 'sports', 'entertainment', 'tech', 
+                                 'world', 'national', 'india', 'politics', 'lifestyle',
+                                 'opinion', 'health', 'science', 'education', 'city'];
+        
+        const isSectionLink = sectionKeywords.some(keyword => 
+          text.includes(keyword) || href.toLowerCase().includes('/' + keyword)
+        );
+        
+        if (isSectionLink && !href.includes('#') && !href.includes('/tag/') && !href.includes('/category/')) {
+          urls.push(href);
+        }
+      }
+      
+      return urls;
+    }, website);
+    
+    sectionUrls.forEach(url => sections.add(url));
+    
+  } catch (e) {
+    console.log(`    ⚠️  Could not discover sections: ${e.message}`);
+  }
+  
+  return Array.from(sections).slice(0, 10); // Limit to top 10 sections
+}
+
+// ============================================================
+// SCRAPE ARTICLES FROM ANY PAGE
+// ============================================================
+
+async function scrapeArticlesFromPage(pageUrl, page, limit) {
+  const authors = [];
+  
+  try {
+    await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+    
+    // Scroll MORE aggressively to load content
+    for (let i = 0; i < 10; i++) {
+      await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+      await delay(800);
+    }
+    
+    await delay(2000); // Wait for lazy loading
+    
+    // Find all article links on the page - MUCH MORE COMPREHENSIVE
+    const articleUrls = await page.evaluate(() => {
+      const urls = new Set();
+      const links = document.querySelectorAll('a[href]');
+      
+      for (const link of links) {
         const href = link.href;
         
-        // Skip if already seen
-        if (urls.has(href)) continue;
+        if (!href || href === '#') continue;
         
-        // Skip profile page itself
-        if (href === profileUrl) continue;
+        // Skip navigation/footer links
+        if (link.closest('nav, header, footer, [role="navigation"]')) continue;
         
-        // Skip obvious non-articles
-        if (!href || href === '#' || href === 'javascript:void(0)') continue;
-        if (href.includes('/author/') || href.includes('/user/') || href.includes('/profile/')) continue;
-        if (href.includes('/tag') || href.includes('/category') || href.includes('/section')) continue;
-        if (href.includes('facebook') || href.includes('twitter') || href.includes('whatsapp')) continue;
-        if (href.includes('youtube') || href.includes('instagram') || href.includes('mailto:')) continue;
+        // Skip non-article links - BUT BE MORE PERMISSIVE
+        if (href.includes('/tag/') || href.includes('/category/') || 
+            href.includes('/author/') || href.includes('/profile/') ||
+            href.includes('/page/') || href.includes('facebook') || 
+            href.includes('twitter') || href.includes('youtube') ||
+            href.includes('instagram') || href.includes('whatsapp')) continue;
         
-        // Parse URL
         try {
-          const urlObj = new URL(href);
+          const url = new URL(href);
+          const pathname = url.pathname;
           
-          // Must be same domain
-          if (urlObj.hostname !== window.location.hostname) continue;
+          // MUCH MORE PERMISSIVE article detection
+          const looksLikeArticle = 
+            /\/\d{4}\/\d{1,2}\/\d{1,2}\/.+/.test(pathname) ||  // Date-based
+            /\/\d{4}-\d{2}-\d{2}\/.+/.test(pathname) ||         // Alternative date
+            /-\d{5,}/.test(pathname) ||                         // Has ID (5+ digits)
+            /\d{5,}\.html/.test(pathname) ||                    // HTML with ID
+            /\/(article|story|news|post|blog)\/.+/.test(pathname) || // Article path
+            /\/(national|world|india|business|sports|entertainment|tech|science|health|lifestyle|opinion)\/.+/.test(pathname) || // Section + content
+            (pathname.includes('/news') && pathname.length > 20) || // News with substantial path
+            (/\d{5,}/.test(pathname) && pathname.length > 15);  // Has ID and substantial
           
-          const pathname = urlObj.pathname;
+          const hasDepth = pathname.split('/').filter(p => p).length >= 2;
+          const notTooShort = pathname.length > 15;
           
-          // Check if URL looks like an article
-          const looksLikeArticle =
-            /\/\d{4}\/\d{1,2}\/\d{1,2}\//.test(pathname) ||
-            /\/\d{4}-\d{2}-\d{2}/.test(pathname) ||
-            /-\d{6,}/.test(pathname) ||
-            /\/\d{6,}/.test(pathname) ||
-            /\.(html|ece|cms|aspx|php|jsp|shtml)$/.test(pathname) ||
-            /\/(article|story|news|post|blog|web-stories)\//i.test(pathname) ||
-            (pathname.length > 20 && pathname.split('/').length >= 3);
-          
-          if (looksLikeArticle) {
+          if (looksLikeArticle && hasDepth && notTooShort) {
             urls.add(href);
+            if (urls.size >= 100) break; // Check more articles
           }
         } catch (e) {}
       }
       
       return Array.from(urls);
-    }, author.profileUrl);
-
-    console.log(`  📝 Found ${articleUrls.length} potential article URLs`);
-    console.log(`  📋 Extracting article metadata without verification...`);
-
-    // OPTIMIZED: Don't visit each article - trust the profile page listing
-    // Extract metadata from URLs and take the first 20 articles
-    const verifiedArticles = articleUrls.slice(0, 20).map((url, idx) => {
-      // Extract date from URL if possible
-      let publishDate = null;
-      const dateMatch = url.match(/\/(\d{4})[/-](\d{1,2})[/-](\d{1,2})\//);
-      if (dateMatch) {
-        publishDate = `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`;
-      }
+    });
+    
+    console.log(`    → Found ${articleUrls.length} article URLs`);
+    
+    // Visit each article and extract author - with BETTER error handling
+    let checked = 0;
+    for (const articleUrl of articleUrls) {
+      if (authors.length >= limit) break;
+      if (checked >= 100) break; // Check up to 100 articles
       
-      // Extract section from URL
-      let section = null;
+      checked++;
+      
       try {
-        const urlObj = new URL(url);
-        const pathParts = urlObj.pathname.split('/').filter(p => p);
-        if (pathParts.length > 0) {
-          section = pathParts[0];
+        await page.goto(articleUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
+        await delay(500);
+        
+        const authorInfo = await extractAuthorFromArticle(page, pageUrl);
+        if (authorInfo && !authors.find(a => a.name === authorInfo.name)) {
+          authors.push(authorInfo);
+          console.log(`      ✓ Found author: ${authorInfo.name}`);
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+    
+  } catch (e) {
+    console.log(`    ⚠️  Page scraping failed: ${e.message}`);
+  }
+  
+  return authors;
+}
+
+// ============================================================
+// EXTRACT AUTHOR FROM ARTICLE PAGE (UNIVERSAL)
+// ============================================================
+
+async function extractAuthorFromArticle(page, baseUrl) {
+  return await page.evaluate((base) => {
+    let authorName = null;
+    let authorUrl = null;
+    
+    // Method 1: JSON-LD Structured Data (HIGHEST PRIORITY - most reliable)
+    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+    for (const script of scripts) {
+      try {
+        const data = JSON.parse(script.textContent);
+        
+        // Handle author field
+        if (data.author) {
+          // Author can be string, object, or array
+          if (typeof data.author === 'string') {
+            authorName = data.author;
+          } else if (Array.isArray(data.author)) {
+            // Take first author
+            const first = data.author[0];
+            authorName = typeof first === 'string' ? first : first.name;
+            authorUrl = first.url || first.sameAs || first['@id'];
+          } else if (data.author.name) {
+            authorName = data.author.name;
+            authorUrl = data.author.url || data.author.sameAs || data.author['@id'];
+          }
+          
+          if (authorName && authorName.length >= 3 && authorName.length < 60 &&
+              !authorName.toLowerCase().includes('google llc')) {
+            // Only use constructed URL if we don't have a real one
+            if (!authorUrl || !authorUrl.startsWith('http')) {
+              const slug = authorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+              const baseUrlObj = new URL(base);
+              authorUrl = `${baseUrlObj.origin}/author/${slug}`;
+            }
+            return { name: authorName.trim(), profileUrl: authorUrl };
+          }
         }
       } catch (e) {}
+    }
+    
+    // Method 2: Author links (PRIORITIZE - these are actual profile URLs)
+    const authorLinkSelectors = [
+      'a[href*="/author/"]',
+      'a[href*="/profile/"]',
+      'a[href*="/journalist/"]',
+      'a[href*="/writer/"]',
+      'a[href*="/reporter/"]',
+      'a[href*="/correspondent/"]',
+      'a[href*="/agency/"]',
+      'a[rel="author"]',
+      '.byline a',
+      '.author a',
+      '.author-name a',
+      '.writer a',
+      '[class*="author"] a',
+      '[class*="byline"] a',
+      '[class*="writer"] a'
+    ];
+    
+    for (const selector of authorLinkSelectors) {
+      const elements = document.querySelectorAll(selector);
+      for (const element of elements) {
+        const name = element.textContent?.trim();
+        const href = element.href;
+        
+        if (name && name.length >= 3 && name.length < 60 && href &&
+            /^[A-Za-z\u0900-\u097F]/.test(name) && 
+            !/^(by|posted|read|view|more|share|follow|click|see|all|edit|profile|login|subscribe)/i.test(name)) {
+          // This is the ACTUAL profile URL from the website
+          return { name, profileUrl: href };
+        }
+      }
+    }
+    
+    // Method 3: Meta Tags (Very reliable)
+    const metaAuthor = document.querySelector('meta[name="author"], meta[property="author"]');
+    if (metaAuthor && metaAuthor.content) {
+      const name = metaAuthor.content.trim();
+      if (name.length >= 3 && name.length < 60 && 
+          !/^(admin|user|google)/i.test(name)) {
+        // No actual profile URL from meta, construct one
+        const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+        const baseUrlObj = new URL(base);
+        const profileUrl = `${baseUrlObj.origin}/author/${slug}`;
+        return { name, profileUrl };
+      }
+    }
+    
+    // Method 4: Author text elements
+    const authorTextSelectors = [
+      '[itemprop="author"] [itemprop="name"]',
+      '[itemprop="author"]',
+      '.author-name',
+      '.byline',
+      '.author',
+      '.writer-name',
+      '.correspondent',
+      'span[class*="author"]',
+      'div[class*="author"]',
+      'span[class*="byline"]',
+      'div[class*="byline"]',
+      '.article-author',
+      '.story-author',
+      '.post-author'
+    ];
+    
+    for (const selector of authorTextSelectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        let name = element.textContent?.trim();
+        
+        if (!name || name.length < 3 || name.length > 60) continue;
+        
+        // Check if element has a link child
+        const linkChild = element.querySelector('a[href]');
+        if (linkChild && linkChild.href) {
+          const childName = linkChild.textContent?.trim();
+          if (childName && childName.length >= 3) {
+            // Use the actual link from the website
+            name = childName;
+            return { name, profileUrl: linkChild.href };
+          }
+        }
+        
+        // Clean up prefixes/suffixes
+        name = name
+          .replace(/^(by|written by|posted by|author:?|द्वारा|लेखक:?|লেখক:?)\s+/i, '')
+          .replace(/\s+(reporter|correspondent|journalist|लेखक|संवाददाता)$/i, '')
+          .trim();
+        
+        // Validate
+        if (name.length >= 3 && name.length < 60 &&
+            /^[A-Za-z\u0900-\u097F\u0980-\u09FF]/.test(name) && // Allow Hindi, Bengali
+            !/\d{2}:\d{2}/.test(name) &&
+            !/\d{4}/.test(name) &&
+            !/(updated|published|posted|edited|ago|am|pm|ist|gmt|minutes|hours|days)/i.test(name)) {
+          
+          const digitCount = (name.match(/\d/g) || []).length;
+          if (digitCount < name.length * 0.2) {
+            // No actual profile URL found, construct one
+            const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+            const baseUrlObj = new URL(base);
+            const profileUrl = `${baseUrlObj.origin}/author/${slug}`;
+            return { name, profileUrl };
+          }
+        }
+      }
+    }
+    
+    // Method 5: Text pattern matching in article body
+    const articleBody = document.querySelector('article, .article, .story, main, .content, .post, [class*="article-body"]');
+    if (articleBody) {
+      const text = articleBody.textContent;
       
-      // Generate title from URL (we'll get actual titles if needed later)
-      const urlParts = url.split('/');
-      const lastPart = urlParts[urlParts.length - 1];
-      const titleSlug = lastPart.replace(/[-_]/g, ' ').replace(/\.(html|cms|aspx|php).*$/, '');
-      const title = titleSlug.charAt(0).toUpperCase() + titleSlug.slice(1);
+      // Patterns for different formats
+      const patterns = [
+        /(?:By|द्वारा|লিখেছেন)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/,
+        /(?:By|द्वारा|লিখেছেন)\s+([\u0900-\u097F]+(?:\s+[\u0900-\u097F]+){1,3})/,
+        /^([A-Z][a-z]+\s+[A-Z][a-z]+)\s*\|/m
+      ];
       
-      return {
-        title: title.substring(0, 100) || 'Article',
-        url: url,
-        publishDate: publishDate,
-        section: section
-      };
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          const name = match[1].trim();
+          if (name.length >= 5 && name.length < 50 &&
+              !/(updated|published|posted|news|desk)/i.test(name)) {
+            // No actual profile URL found, construct one
+            const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+            const baseUrlObj = new URL(base);
+            const profileUrl = `${baseUrlObj.origin}/author/${slug}`;
+            return { name, profileUrl };
+          }
+        }
+      }
+    }
+    
+    return null;
+  }, baseUrl);
+}
+
+// ============================================================
+// FAST ARTICLE EXTRACTION
+// ============================================================
+
+async function extractAuthorArticlesFast(page, website) {
+  try {
+    // Scroll to load articles
+    for (let i = 0; i < 8; i++) {
+      await page.evaluate(() => window.scrollBy(0, window.innerHeight * 1.5));
+      await delay(400);
+    }
+    
+    await delay(1000); // Wait for content to load
+    
+    const articles = await page.evaluate((baseUrl) => {
+      const articlesData = [];
+      const seenUrls = new Set();
+      const baseUrlObj = new URL(baseUrl);
+      
+      // STEP 1: Find article containers first (more accurate)
+      const articleContainers = [
+        'article',
+        '.article',
+        '.story',
+        '.post',
+        '[class*="article-item"]',
+        '[class*="story-item"]',
+        '[class*="post-item"]',
+        '[class*="news-item"]',
+        '[class*="content-item"]',
+        '.news-card',
+        '.story-card',
+        '.article-card'
+      ];
+      
+      let foundInContainers = false;
+      
+      for (const selector of articleContainers) {
+        const containers = document.querySelectorAll(selector);
+        if (containers.length === 0) continue;
+        
+        for (const container of containers) {
+          // Must have a link
+          const link = container.querySelector('a[href]');
+          if (!link) continue;
+          
+          const href = link.href;
+          if (!href || seenUrls.has(href)) continue;
+          
+          try {
+            const url = new URL(href);
+            if (url.hostname !== baseUrlObj.hostname) continue;
+            
+            const pathname = url.pathname;
+            
+            // Validate it's actually an article URL
+            const isArticle =
+              /\/\d{4}\/\d{1,2}\/\d{1,2}\/.+/.test(pathname) ||
+              /\/\d{4}-\d{2}-\d{2}\/.+/.test(pathname) ||
+              /-\d{5,}/.test(pathname) ||
+              /\d{8,}\.html/.test(pathname) ||
+              /\/(article|story|news|post|blog)\/.+/.test(pathname);
+            
+            if (!isArticle || pathname.length < 20) continue;
+            
+            // Extract title properly
+            let title = '';
+            
+            // Try heading in container first (most accurate)
+            const heading = container.querySelector('h1, h2, h3, h4, h5, [class*="title"], [class*="headline"]');
+            if (heading) {
+              title = heading.textContent?.trim();
+            }
+            
+            // Fallback to link text
+            if (!title || title.length < 15) {
+              title = link.textContent?.trim();
+            }
+            
+            // Clean title
+            if (title) {
+              title = title.replace(/\s+/g, ' ').trim();
+              // Remove "Read more", "Continue reading" etc
+              title = title.replace(/^(read more|continue reading|view|click)[\s:]/i, '');
+            }
+            
+            // Validate title
+            if (title && title.length >= 15 && title.length < 300 &&
+                !/^(home|menu|search|login|subscribe|share|follow|next|previous|back|close)/i.test(title)) {
+              
+              articlesData.push({
+                title: title.substring(0, 250),
+                url: href,
+                publishDate: null
+              });
+              
+              seenUrls.add(href);
+              foundInContainers = true;
+              
+              if (articlesData.length >= 25) break;
+            }
+          } catch (e) {}
+        }
+        
+        if (articlesData.length >= 25) break;
+      }
+      
+      // STEP 2: If containers didn't work, try all links (but more carefully)
+      if (!foundInContainers || articlesData.length < 5) {
+        const allLinks = document.querySelectorAll('a[href]');
+        
+        for (const link of allLinks) {
+          const href = link.href;
+          
+          if (!href || href === '#' || seenUrls.has(href)) continue;
+          
+          // Skip navigation
+          if (link.closest('nav, header, footer, aside, [role="navigation"]')) continue;
+          
+          // Skip non-article links
+          if (href.includes('/author/') || href.includes('/profile/') || 
+              href.includes('/tag/') || href.includes('/category/') ||
+              href.includes('/search') || href.includes('/page/') ||
+              href.includes('facebook') || href.includes('twitter') || 
+              href.includes('instagram') || href.includes('whatsapp') ||
+              href.includes('youtube') || href.includes('mailto:')) continue;
+          
+          try {
+            const url = new URL(href);
+            if (url.hostname !== baseUrlObj.hostname) continue;
+            
+            const pathname = url.pathname;
+            
+            // Strict article validation
+            const isArticle =
+              /\/\d{4}\/\d{1,2}\/\d{1,2}\/.{15,}/.test(pathname) ||
+              /-\d{6,}/.test(pathname) ||
+              /\d{8,}\.html/.test(pathname) ||
+              (/\/(article|story|news|post)\/.{20,}/.test(pathname));
+            
+            if (!isArticle || pathname.length < 25) continue;
+            
+            // Get title
+            let title = link.textContent?.trim() || link.getAttribute('title') || '';
+            
+            // Try to find title in parent
+            if (!title || title.length < 15) {
+              const parent = link.closest('article, [class*="article"], [class*="story"], [class*="post"], [class*="content"]');
+              if (parent) {
+                const heading = parent.querySelector('h1, h2, h3, h4, h5, [class*="title"], [class*="headline"]');
+                if (heading) title = heading.textContent?.trim();
+              }
+            }
+            
+            // Clean and validate
+            if (title) {
+              title = title.replace(/\s+/g, ' ').trim();
+              title = title.replace(/^(read more|continue|view|click)[\s:]/i, '');
+              
+              if (title.length >= 15 && title.length < 300 &&
+                  !/^(home|menu|search|login|subscribe|share|follow|next|previous|back|close)/i.test(title)) {
+                
+                articlesData.push({
+                  title: title.substring(0, 250),
+                  url: href,
+                  publishDate: null
+                });
+                
+                seenUrls.add(href);
+                
+                if (articlesData.length >= 25) break;
+              }
+            }
+          } catch (e) {}
+        }
+      }
+      
+      return articlesData;
+    }, website);
+    
+    return articles;
+    
+  } catch (err) {
+    return [];
+  }
+}
+
+// ============================================================
+// EXTRACT DETAILED AUTHOR DATA
+// ============================================================
+
+async function extractAuthorData(author, outletName, browser, website) {
+  const page = await browser.newPage();
+  await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
+
+  try {
+    // Load profile page - with error handling for invalid URLs
+    let profileLoaded = false;
+    let actualProfileUrl = author.profileUrl;
+    
+    try {
+      const response = await page.goto(author.profileUrl, { 
+        waitUntil: 'domcontentloaded', 
+        timeout: 10000
+      });
+      
+      // Check if page actually exists (not 404)
+      if (response && response.status() === 200) {
+        profileLoaded = true;
+        actualProfileUrl = page.url(); // Get actual URL after any redirects
+      }
+    } catch (profileError) {
+      console.log(`    ⚠️  Profile page failed for ${author.name}: ${profileError.message}`);
+      // Try to find author page from main website
+      try {
+        await page.goto(website, { waitUntil: 'domcontentloaded', timeout: 8000 });
+        
+        // Search for author link on homepage
+        const foundProfileUrl = await page.evaluate((authorName) => {
+          const links = document.querySelectorAll('a[href*="/author/"], a[href*="/profile/"], a[href*="/journalist/"]');
+          for (const link of links) {
+            if (link.textContent?.trim().toLowerCase() === authorName.toLowerCase()) {
+              return link.href;
+            }
+          }
+          return null;
+        }, author.name);
+        
+        if (foundProfileUrl) {
+          await page.goto(foundProfileUrl, { waitUntil: 'domcontentloaded', timeout: 8000 });
+          actualProfileUrl = foundProfileUrl;
+          profileLoaded = true;
+        }
+      } catch (e) {}
+    }
+
+    // Extract profile info
+    const profileData = await page.evaluate(() => {
+      const data = { bio: null, role: null, email: null };
+      
+      // Bio extraction
+      const bioEl = document.querySelector('.bio, .author-bio, .description, [itemprop="description"], [class*="bio"]');
+      if (bioEl) {
+        const text = bioEl.textContent?.trim();
+        if (text && text.length > 20 && text.length < 1000) {
+          data.bio = text;
+        }
+      }
+      
+      // Role extraction
+      const roleEl = document.querySelector('.role, .title, .position, .designation, [itemprop="jobTitle"], [class*="role"]');
+      if (roleEl) data.role = roleEl.textContent?.trim();
+      
+      // Email extraction
+      const emailMatch = document.body.innerText.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/);
+      if (emailMatch && !emailMatch[1].includes('@example.') && emailMatch[1].length < 50) {
+        data.email = emailMatch[1];
+      }
+      
+      return data;
     });
 
-    console.log(`  ✅ Collected ${verifiedArticles.length} articles from profile`);
+    // Extract articles
+    const articles = await extractAuthorArticlesFast(page, website);
 
     await page.close();
+
+    // ALWAYS run NLP Analysis if we have articles
+    let keywords = [];
+    let topicCategories = [];
+    let influenceScore = 50;
+    let topKeywords = [];
+    
+    if (articles.length > 0) {
+      try {
+        // Get all article titles
+        const allTitles = articles.map(a => a.title).filter(t => t && t.length > 10);
+        
+        if (allTitles.length > 0) {
+          // Combine all titles for NLP analysis
+          const combinedText = allTitles.join(' ');
+          
+          // Extract topics
+          topicCategories = categorizeTopics(combinedText);
+          
+          // Extract keywords
+          const nlpAnalysis = analyzeArticleTitles(allTitles);
+          if (nlpAnalysis && nlpAnalysis.keywords) {
+            keywords = nlpAnalysis.keywords.slice(0, 15).map(k => k.term);
+            topKeywords = nlpAnalysis.keywords.slice(0, 5).map(k => k.term);
+          }
+          
+          // Calculate influence
+          influenceScore = calculateInfluence({
+            articles: articles.length,
+            topics: topicCategories,
+            socialLinks: {},
+            bio: profileData.bio,
+            profilePic: null
+          });
+        }
+      } catch (nlpError) {
+        console.log(`    ⚠️  NLP analysis failed for ${author.name}: ${nlpError.message}`);
+        // Set defaults if NLP fails
+        topicCategories = ['General'];
+        keywords = [];
+        topKeywords = [];
+      }
+    }
 
     return {
       name: author.name,
       outlet: outletName,
-      profileUrl: author.profileUrl,
-      role: profileData.role,
+      profileUrl: actualProfileUrl, // Use actual URL after redirects
+      role: profileData.role || inferRole(author.name),
       bio: profileData.bio,
       email: profileData.email,
-      socialLinks: profileData.socialLinks,
-      profilePicture: profileData.profilePicture,
-      articles: verifiedArticles,
-      totalArticles: verifiedArticles.length
+      socialLinks: {},
+      profilePicture: null,
+      articles: articles,
+      totalArticles: articles.length,
+      keywords: keywords,
+      topics: topicCategories,
+      influenceScore: influenceScore,
+      topKeywords: topKeywords
     };
 
   } catch (err) {
-    console.error(`  ❌ Error: ${err.message}`);
     await page.close();
-    return null;
-  }
-}
-
-// ============================================================
-// MAIN FUNCTION: INTELLIGENT OUTLET SCRAPER
-// ============================================================
-
-/**
- * INTELLIGENT OUTLET SCRAPER
- * 
- * Takes ONLY the outlet name and automatically:
- * 1. Detects the official website
- * 2. Discovers authors
- * 3. Extracts all available data
- * 
- * NO manual URLs or pre-saved mappings needed!
- */
-export async function scrapeOutletIntelligent(outletName, maxAuthors = 30) {
-  console.log(`\n${'='.repeat(80)}`);
-  console.log(`🚀 INTELLIGENT OUTLET SCRAPER`);
-  console.log(`📰 Outlet: ${outletName}`);
-  console.log(`👥 Max Authors to Extract: ${maxAuthors}`);
-  console.log('='.repeat(80));
-
-  const browser = await puppeteer.launch({
-    headless: false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized'],
-    defaultViewport: null,
-    protocolTimeout: 160000, // Reduced from 3 minutes to 2.67 minutes
-  });
-
-  try {
-    // Step 1: Auto-detect outlet website
-    const website = await detectOutletWebsite(outletName, browser);
     
-    if (!website) {
-      console.log(`\n❌ Could not detect website for "${outletName}"`);
-      await browser.close();
-      return { error: 'Website detection failed', outlet: outletName };
-    }
-
-    // Step 2: Discover authors
-    const authors = await discoverAuthors(website, outletName, browser, maxAuthors);
-    
-    if (authors.length === 0) {
-      console.log(`\n❌ No authors discovered on ${website}`);
-      await browser.close();
-      return { error: 'No authors found', outlet: outletName, website };
-    }
-
-    // Step 3: Extract data for each author
-    console.log(`\n\n${'='.repeat(80)}`);
-    console.log(`📊 EXTRACTING DATA FOR ${authors.length} AUTHORS (PARALLEL MODE)`);
-    console.log('='.repeat(80));
-
-    const results = [];
-
-    // Process authors in parallel (2 at a time for speed)
-    const PARALLEL_LIMIT = 2;
-    
-    for (let i = 0; i < authors.length; i += PARALLEL_LIMIT) {
-      const batch = authors.slice(i, Math.min(i + PARALLEL_LIMIT, authors.length));
-      
-      console.log(`\n[${'='.repeat(76)}]`);
-      console.log(`  Processing batch ${Math.floor(i / PARALLEL_LIMIT) + 1} (Authors ${i + 1}-${Math.min(i + PARALLEL_LIMIT, authors.length)} of ${authors.length})`);
-      console.log(`[${'='.repeat(76)}]`);
-
-      // Process batch in parallel
-      const batchPromises = batch.map(async (author, batchIdx) => {
-        const authorNum = i + batchIdx + 1;
-        console.log(`\n  [${authorNum}/${authors.length}] Starting: ${author.name}`);
-        
-        const data = await extractAuthorData(author, outletName, browser);
-        
-        if (data) {
-          console.log(`  [${authorNum}/${authors.length}] ✅ Completed: ${author.name} (${data.totalArticles} articles)`);
-          return data;
-        } else {
-          console.log(`  [${authorNum}/${authors.length}] ❌ Failed: ${author.name}`);
-          return null;
-        }
-      });
-
-      // Wait for batch to complete
-      const batchResults = await Promise.all(batchPromises);
-      results.push(...batchResults.filter(r => r !== null));
-
-      // Small delay between batches to avoid overwhelming the server
-      if (i + PARALLEL_LIMIT < authors.length) {
-        console.log(`\n⏳ Waiting 1 second before next batch...`);
-        await delay(1000);
-      }
-    }
-
-    await browser.close();
-
-    // Final summary
-    console.log(`\n\n${'='.repeat(80)}`);
-    console.log(`✅ SCRAPING COMPLETE`);
-    console.log('='.repeat(80));
-    console.log(`📰 Outlet: ${outletName}`);
-    console.log(`🌐 Website: ${website}`);
-    console.log(`👥 Authors Extracted: ${results.length}/${authors.length}`);
-    console.log(`📝 Total Articles: ${results.reduce((sum, r) => sum + r.totalArticles, 0)}`);
-    console.log('='.repeat(80));
-
+    // Return minimal data if profile fails
     return {
+      name: author.name,
       outlet: outletName,
-      website: website,
-      authorsCount: results.length,
-      authors: results
+      profileUrl: author.profileUrl, // Keep original URL even if failed
+      role: inferRole(author.name),
+      bio: null,
+      email: null,
+      socialLinks: {},
+      profilePicture: null,
+      articles: [],
+      totalArticles: 0,
+      keywords: [],
+      topics: [],
+      influenceScore: 50,
+      topKeywords: []
     };
-
-  } catch (err) {
-    console.error(`\n❌ Fatal error: ${err.message}`);
-    await browser.close();
-    return { error: err.message, outlet: outletName };
   }
 }
 
-// Export for use in other files
+// ============================================================
+// HELPER: INFER ROLE FROM NAME
+// ============================================================
+
+function inferRole(name) {
+  const lower = name.toLowerCase();
+  if (lower.includes('desk')) return 'News Desk';
+  if (lower.includes('bureau')) return 'Bureau';
+  if (lower.includes('tech')) return 'Technology Reporter';
+  if (lower.includes('sports')) return 'Sports Reporter';
+  if (lower.includes('business')) return 'Business Reporter';
+  if (lower.includes('entertainment')) return 'Entertainment Reporter';
+  if (lower.includes('politics')) return 'Political Reporter';
+  return 'Journalist';
+}
+
 export default scrapeOutletIntelligent;

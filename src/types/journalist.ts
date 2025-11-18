@@ -8,14 +8,17 @@ export interface Journalist {
   color: string;
 }
 
+export interface Node {
+  id: string;
+  name: string;
+  val: number;
+  color: string;
+  group?: string;
+  journalist?: Journalist;
+}
+
 export interface GraphData {
-  nodes: Array<{
-    id: string;
-    name: string;
-    val: number;
-    color: string;
-    journalist: Journalist;
-  }>;
+  nodes: Node[];
   links: Array<{
     source: string;
     target: string;
