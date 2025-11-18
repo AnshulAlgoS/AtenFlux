@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Filter, X } from 'lucide-react';
@@ -13,6 +13,29 @@ interface FiltersPanelProps {
 export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelProps) => {
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [selectedOutlets, setSelectedOutlets] = useState<string[]>([]);
+
+  // Deduplicate and normalize outlets (case-insensitive)
+  const uniqueOutlets = useMemo(() => {
+    const outletMap = new Map<string, string>();
+    
+    outlets.forEach(outlet => {
+      const normalized = outlet.toLowerCase().trim();
+      // Keep the first occurrence (with original casing)
+      if (!outletMap.has(normalized)) {
+        outletMap.set(normalized, outlet);
+      }
+    });
+    
+    // Return sorted unique outlets
+    return Array.from(outletMap.values()).sort((a, b) => 
+      a.toLowerCase().localeCompare(b.toLowerCase())
+    );
+  }, [outlets]);
+
+  // Deduplicate topics as well
+  const uniqueTopics = useMemo(() => {
+    return Array.from(new Set(topics)).sort();
+  }, [topics]);
 
   const toggleTopic = (topic: string) => {
     const newTopics = selectedTopics.includes(topic)
@@ -62,7 +85,7 @@ export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelPr
           Topics
         </label>
         <div className="flex flex-wrap gap-2">
-          {topics.map((topic) => (
+          {uniqueTopics.map((topic) => (
             <Badge
               key={topic}
               variant={selectedTopics.includes(topic) ? "default" : "outline"}
@@ -82,11 +105,11 @@ export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelPr
       {/* Outlets */}
       <div>
         <h4 className="text-xs font-mono uppercase text-muted-foreground mb-3">
-          Outlets
+          Outlets ({uniqueOutlets.length})
         </h4>
-        {outlets.length > 0 ? (
+        {uniqueOutlets.length > 0 ? (
           <div className="flex flex-wrap gap-2">
-            {outlets.map((outlet) => (
+            {uniqueOutlets.map((outlet) => (
               <Button
                 key={outlet}
                 onClick={() => toggleOutlet(outlet)}
