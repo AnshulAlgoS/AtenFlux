@@ -84,12 +84,12 @@ const Topics = () => {
         "http://localhost:5002/api/authors/profiles",
         "https://aten-131r.onrender.com/api/authors/profiles"
       ];
-      
+
       for (const url of urls) {
         try {
           const res = await axios.get(url, { timeout: 5000 });
           const profiles = res.data.profiles || res.data || [];
-const uniqueOutlets = [...new Set(profiles.map((p: any) => p.outlet).filter(Boolean))] as string[];
+          const uniqueOutlets = [...new Set(profiles.map((p: any) => p.outlet).filter(Boolean))] as string[];
           if (uniqueOutlets.length > 0) {
             setOutlets(uniqueOutlets);
             break;
@@ -135,7 +135,7 @@ const uniqueOutlets = [...new Set(profiles.map((p: any) => p.outlet).filter(Bool
             </div>
 
             <div className="bg-muted border border-primary/20 h-[800px] relative overflow-hidden rounded-lg">
-              <NetworkGraph 
+              <NetworkGraph
                 selectedTopics={selectedTopics}
                 selectedOutlets={selectedOutlets}
               />

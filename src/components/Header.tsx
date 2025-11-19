@@ -106,19 +106,19 @@ export const Header = () => {
     }
   };
 
-  const scrapeAuthor = async (outlet: string) => {
+  const scrapeAuthor = async (outlet: string, author: string) => {
     setScraping(true);
-    setMessage(`Scraping ${outlet} to find the author...`);
+    setMessage(`🔍 Scraping ${outlet} for ${author}...`);
     
     try {
-      const urls = getFallbackUrls(API_ENDPOINTS.DISCOVER_AND_SCRAPE);
+      const urls = getFallbackUrls('/api/authors/scrape-specific');
       
       let response;
       for (const url of urls) {
         try {
           response = await axios.post(url, 
-            { outlet, maxAuthors: 30 },
-            { timeout: 300000 } // 5 minutes
+            { outlet, authorName: author },
+            { timeout: 120000 } // 2 minutes
           );
           break;
         } catch (err) {
@@ -131,12 +131,45 @@ export const Header = () => {
         return false;
       }
 
-      const jobId = response.data.jobId;
-      setMessage(`⏳ Scraping started... (Job: ${jobId})`);
+      if (response.data.error) {
+        setMessage(`❌ ${response.data.error}`);
+        return false;
+      }
 
-      // Poll for completion
-      await pollJobStatus(jobId);
-      return true;
+      // The backend returns success immediately and scrapes in background
+      // So we need to wait and poll for the result
+      if (response.data.success) {
+        setMessage(`⏳ Scraping started... Checking database every 3 seconds...`);
+        
+        // Wait for scraping to complete (up to 2 minutes)
+        let attempts = 0;
+        const maxAttempts = 40; // 2 minutes (40 * 3 seconds)
+        
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+          attempts++;
+          
+          const elapsed = attempts * 3;
+          setMessage(`⏳ Scraping in progress... (${elapsed}s elapsed, checking database...)`);
+          
+          // Try to find in database
+          const found = await searchInDatabase(outlet, author);
+          if (found) {
+            setMessage('✅ Author scraped and found in database!');
+            setScraping(false);
+            setSelectedProfile(found);
+            setShowModal(true);
+            setShowSearch(false);
+            return true;
+          }
+        }
+        
+        setMessage('⏰ Scraping is taking longer than expected. Please search again in 30 seconds.');
+        return false;
+      }
+
+      setMessage('❌ Unexpected response from server');
+      return false;
     } catch (error: any) {
       console.error('Scraping error:', error);
       setMessage(`❌ Scraping failed: ${error.message}`);
@@ -144,60 +177,6 @@ export const Header = () => {
     } finally {
       setScraping(false);
     }
-  };
-
-  const pollJobStatus = async (jobId: string) => {
-    const maxAttempts = 60; // 5 minutes max
-    let attempts = 0;
-
-    return new Promise<void>((resolve, reject) => {
-      const interval = setInterval(async () => {
-        attempts++;
-        
-        try {
-          const urls = getFallbackUrls(`/api/authors/job-status/${jobId}`);
-          let response;
-          
-          for (const url of urls) {
-            try {
-              response = await axios.get(url);
-              break;
-            } catch (err) {
-              continue;
-            }
-          }
-
-          if (!response) {
-            clearInterval(interval);
-            reject(new Error('Failed to check job status'));
-            return;
-          }
-
-          const job = response.data;
-          
-          if (job.status === 'completed') {
-            clearInterval(interval);
-            setMessage('✅ Scraping completed! Searching for author...');
-            resolve();
-          } else if (job.status === 'failed') {
-            clearInterval(interval);
-            setMessage(`❌ Scraping failed: ${job.error || 'Unknown error'}`);
-            reject(new Error(job.error));
-          } else {
-            // Update progress
-            setMessage(`⏳ Scraping in progress... ${job.progress}% - ${job.message || 'Processing...'}`);
-          }
-
-          if (attempts >= maxAttempts) {
-            clearInterval(interval);
-            setMessage('⏰ Scraping timeout. Please try again later.');
-            reject(new Error('Timeout'));
-          }
-        } catch (error) {
-          console.error('Polling error:', error);
-        }
-      }, 5000); // Check every 5 seconds
-    });
   };
 
   const handleSearch = async () => {
@@ -214,29 +193,25 @@ export const Header = () => {
       setSelectedProfile(found);
       setShowModal(true);
       setShowSearch(false);
+      setOutletName('');
+      setAuthorName('');
+      setMessage('');
       return;
     }
 
-    // Step 2: Not found, trigger scraping
+    // Step 2: Not found, trigger specific author scraping
     setMessage(`❌ Author not found in database. Starting scraping...`);
     
-    const scraped = await scrapeAuthor(outletName);
+    const scraped = await scrapeAuthor(outletName, authorName);
 
     if (scraped) {
-      // Search again after scraping
-      setMessage('🔍 Searching again after scraping...');
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-      
-      const foundAfterScrape = await searchInDatabase(outletName, authorName);
-      
-      if (foundAfterScrape) {
-        setMessage('✅ Author found after scraping!');
-        setSelectedProfile(foundAfterScrape);
-        setShowModal(true);
-        setShowSearch(false);
-      } else {
-        setMessage('❌ Author not found even after scraping. Please check the name and outlet.');
-      }
+      // Success handled in scrapeAuthor function
+      setOutletName('');
+      setAuthorName('');
+      setMessage('');
+    } else {
+      // Show helpful message
+      setMessage('💡 Tip: The scraper may still be running. Try searching again in 30 seconds.');
     }
   };
 

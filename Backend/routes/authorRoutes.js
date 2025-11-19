@@ -2,6 +2,7 @@ import express from "express";
 import Author from "../models/Author.js";
 import AuthorProfile from "../models/AuthorProfile.js";
 import { scrapeOutletIntelligent } from "../scrapers/outletAuthorScraper.js";
+import { scrapeSpecificAuthor } from "../scrapers/specificAuthorScraper.js";
 
 const router = express.Router();
 
@@ -197,6 +198,107 @@ router.post("/discover-and-scrape", async (req, res) => {
     console.error("❌ Error starting job:", error);
     res.status(500).json({ 
       error: "Failed to start scraping job",
+      details: error.message 
+    });
+  }
+});
+
+// ============================================================
+// NEW: Scrape specific author only (FAST - No job tracking needed)
+// ============================================================
+router.post("/scrape-specific", async (req, res) => {
+  try {
+    const { outlet, authorName } = req.body;
+
+    if (!outlet || !authorName) {
+      return res.status(400).json({ error: "Outlet and author name are required" });
+    }
+
+    console.log(`\n🎯 Scraping specific author: ${authorName} from ${outlet}`);
+
+    // Don't await - send response immediately
+    res.json({
+      success: true,
+      message: 'Specific author scraping started',
+      outlet,
+      authorName
+    });
+
+    // Start scraping in background
+    (async () => {
+      try {
+        // Use the specific author scraper
+        const result = await scrapeSpecificAuthor(outlet, authorName);
+
+        if (result.error) {
+          console.error(`❌ Failed to scrape ${authorName}: ${result.error}`);
+          return;
+        }
+
+        if (!result.author) {
+          console.error(`❌ No author data returned for ${authorName}`);
+          return;
+        }
+
+        const authorData = result.author;
+        const normalizedOutlet = outlet.toLowerCase().trim();
+
+        console.log(`\n💾 Saving ${authorData.name} to database...`);
+        console.log(`   Topics: ${JSON.stringify(authorData.topics)}`);
+        console.log(`   Keywords: ${JSON.stringify(authorData.keywords?.slice(0, 5))}`);
+        console.log(`   Articles: ${authorData.totalArticles}`);
+
+        // Save to AuthorProfile collection
+        const profile = await AuthorProfile.findOneAndUpdate(
+          { profileLink: authorData.profileUrl },
+          {
+            $set: {
+              name: authorData.name,
+              outlet: normalizedOutlet,
+              profileLink: authorData.profileUrl,
+              profilePic: authorData.profilePicture,
+              bio: authorData.bio,
+              role: authorData.role,
+              email: authorData.email,
+              socialLinks: authorData.socialLinks,
+              articles: authorData.totalArticles,
+              articleLinks: authorData.articles.map(a => a.url),
+              articleData: authorData.articles,
+              latestArticle: authorData.articles[0] || null,
+              topics: authorData.topics || [],
+              keywords: authorData.keywords || [],
+              influence: authorData.influenceScore || 0,
+              scrapedAt: new Date()
+            }
+          },
+          { upsert: true, new: true }
+        );
+
+        // Also save to Author collection for backwards compatibility
+        await Author.findOneAndUpdate(
+          { profileLink: authorData.profileUrl },
+          {
+            $set: {
+              name: authorData.name,
+              outlet: normalizedOutlet,
+              profileLink: authorData.profileUrl,
+              updatedAt: new Date()
+            }
+          },
+          { upsert: true, new: true }
+        );
+
+        console.log(`✅ Successfully saved ${authorData.name} (${profile.topics?.length || 0} topics, ${profile.keywords?.length || 0} keywords)\n`);
+
+      } catch (error) {
+        console.error(`❌ Error in specific scraper:`, error);
+      }
+    })();
+
+  } catch (error) {
+    console.error("❌ Error starting specific scraper:", error);
+    res.status(500).json({ 
+      error: "Failed to start scraping",
       details: error.message 
     });
   }

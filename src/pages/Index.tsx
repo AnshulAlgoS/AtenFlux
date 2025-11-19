@@ -9,13 +9,13 @@ import { ParticleBackground } from "@/components/ParticleBackground";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { TopInfluencers } from "@/components/TopInfluencers";
 import { FiltersPanel } from "@/components/FiltersPanel";
-import { TopicClusters } from "@/components/TopicClusters";
+import TopicClusters from "@/components/TopicClusters";
 import { Footer } from "@/components/Footer";
 import AuthorsFetcher from "@/components/AuthorsFetcher";
-import { generateMockJournalists, generateGraphData } from "@/utils/mockData";
-import type { GraphData, Journalist, Node } from "@/types/journalist";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
+import { getFallbackUrls, API_ENDPOINTS } from "@/config/api";
+import type { GraphData, Journalist } from "@/types/journalist";
 
 const Index = () => {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
@@ -56,34 +56,89 @@ const Index = () => {
     count: graphData.nodes.filter((n) => n.journalist?.topics.includes(topic)).length,
   }));
 
-  // ---------------- Load mock graph data ----------------
-  const loadData = () => {
+  // ---------------- Load real graph data from API ----------------
+  const loadData = async () => {
     setIsLoading(true);
-    setTimeout(() => {
-      const journalists = generateMockJournalists(50);
-      const data: GraphData = generateGraphData(journalists);
-
-      // Attach journalist to each node for filtering & TopInfluencers
-      data.nodes = data.nodes.map((node) => {
-        if (node.group === "author") {
-          const journalist = journalists.find((j) => j.name === node.name);
-          return { ...node, journalist: journalist! };
+    try {
+      const urls = getFallbackUrls(API_ENDPOINTS.AUTHOR_PROFILES);
+      
+      for (const url of urls) {
+        try {
+          const res = await axios.get(url, { timeout: 10000 });
+          const profiles = res.data.profiles || res.data || [];
+          
+          if (profiles.length > 0) {
+            // Transform profiles into graph data structure
+            const nodes = profiles.slice(0, 100).map((profile: any, idx: number) => ({
+              id: `author-${idx}`,
+              name: profile.name,
+              group: 'author',
+              journalist: {
+                id: profile._id,
+                name: profile.name,
+                outlet: profile.outlet,
+                topics: profile.topics || [],
+                articles: profile.articles || 0,
+                influence: profile.influence || 0,
+                profilePic: profile.profilePic,
+                bio: profile.bio,
+              }
+            }));
+            
+            // Create topic nodes
+            const topicSet = new Set<string>();
+            profiles.forEach((p: any) => {
+              if (p.topics) {
+                p.topics.forEach((t: string) => topicSet.add(t));
+              }
+            });
+            
+            const topicNodes = Array.from(topicSet).map((topic, idx) => ({
+              id: `topic-${idx}`,
+              name: topic,
+              group: 'topic'
+            }));
+            
+            // Create links between authors and topics
+            const links: any[] = [];
+            profiles.forEach((profile: any, idx: number) => {
+              if (profile.topics) {
+                profile.topics.forEach((topic: string) => {
+                  const topicIdx = Array.from(topicSet).indexOf(topic);
+                  if (topicIdx !== -1) {
+                    links.push({
+                      source: `author-${idx}`,
+                      target: `topic-${topicIdx}`,
+                      value: 1
+                    });
+                  }
+                });
+              }
+            });
+            
+            const graphData: GraphData = {
+              nodes: [...nodes, ...topicNodes],
+              links
+            };
+            
+            setGraphData(graphData);
+            setFilteredData(graphData);
+            break;
+          }
+        } catch (err) {
+          console.warn(`Failed to load data from ${url}`);
         }
-        return node;
-      });
-
-      setGraphData(data);
-      setFilteredData(data);
+      }
+    } catch (error) {
+      console.error('Error loading graph data:', error);
+    } finally {
       setIsLoading(false);
-    }, 500);
+    }
   };
 
   // ---------------- Fetch outlets ----------------
   const fetchOutlets = async () => {
-    const urls = [
-      "http://localhost:5002/api/authors/profiles",
-      "https://aten-131r.onrender.com/api/authors/profiles"
-    ];
+    const urls = getFallbackUrls(API_ENDPOINTS.AUTHOR_PROFILES);
     
     for (const url of urls) {
       try {
@@ -103,10 +158,7 @@ const Index = () => {
 
   // ---------------- Fetch top journalists ----------------
   const fetchTopJournalists = async () => {
-    const urls = [
-      "http://localhost:5002/top-journalists",
-      "https://aten-131r.onrender.com/top-journalists",
-    ];
+    const urls = getFallbackUrls(API_ENDPOINTS.TOP_JOURNALISTS);
 
     let data: Journalist[] | null = null;
     for (const url of urls) {
