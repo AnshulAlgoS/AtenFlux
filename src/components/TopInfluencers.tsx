@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { TrendingUp, Award } from 'lucide-react';
 import { Journalist } from '@/types/journalist';
+import { getFallbackUrls, API_ENDPOINTS } from '@/config/api';
 
 export const TopInfluencers = ({ onJournalistClick }: { onJournalistClick?: (id: string) => void }) => {
   const [journalists, setJournalists] = useState<Journalist[]>([]);
@@ -9,11 +10,7 @@ export const TopInfluencers = ({ onJournalistClick }: { onJournalistClick?: (id:
 
   useEffect(() => {
     const fetchTopJournalists = async () => {
-      const urls = [
-        "http://localhost:5003/top-journalists",
-        "https://aten-131r.onrender.com/top-journalists"
-      ];
-
+      const urls = getFallbackUrls(API_ENDPOINTS.TOP_JOURNALISTS);
       let data: Journalist[] | null = null;
 
       for (const url of urls) {
@@ -21,14 +18,14 @@ export const TopInfluencers = ({ onJournalistClick }: { onJournalistClick?: (id:
           const res = await fetch(url);
           data = await res.json();
           console.log(`Successfully fetched top journalists from ${url}`);
-          break; 
+          break;
         } catch (err: any) {
           console.warn(`Failed to fetch from ${url}:`, err.message);
         }
       }
 
       if (!data) {
-        console.error("Failed to fetch top journalists from all endpoints");
+        console.error('Failed to fetch top journalists from all endpoints');
         setLoading(false);
         return;
       }

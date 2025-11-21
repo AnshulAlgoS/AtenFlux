@@ -891,6 +891,54 @@ async function extractArticleBasedProfile(page, authorInfo, website) {
     mergedArticles = [{ title: `No articles found for author ${authorInfo.name}`, url: website }];
   }
 
+  try {
+    const verified = [];
+    const toCheck = mergedArticles.slice(0, 60);
+    for (const a of toCheck) {
+      try {
+        await page.goto(a.url, { waitUntil: 'domcontentloaded', timeout: 9000 });
+        await delay(300);
+        const matches = await page.evaluate((author) => {
+          const target = (author || '').toLowerCase().trim();
+          if (!target) return false;
+          let ok = false;
+          try {
+            const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+            for (const s of scripts) {
+              try {
+                const data = JSON.parse(s.textContent || '{}');
+                const au = data.author;
+                if (typeof au === 'string') {
+                  if (au.toLowerCase().includes(target)) { ok = true; break; }
+                } else if (Array.isArray(au)) {
+                  if (au.some(x => (x?.name || '').toLowerCase().includes(target))) { ok = true; break; }
+                } else if (au && typeof au === 'object') {
+                  if ((au.name || '').toLowerCase().includes(target)) { ok = true; break; }
+                }
+              } catch {}
+            }
+          } catch {}
+          if (ok) return true;
+          const bylineSel = '[class*="byline"], .byline, [itemprop="author"], .author, .pst-by, .pst-by_ln, span.posted-by';
+          const by = document.querySelector(bylineSel);
+          const txt = (by?.textContent || '').toLowerCase();
+          if (txt && txt.includes(target)) return true;
+          const meta = document.querySelector('meta[name="author"], meta[property="article:author"], meta[property="author"]');
+          const m = (meta?.getAttribute('content') || '').toLowerCase();
+          if (m && m.includes(target)) return true;
+          return false;
+        }, authorInfo.name);
+        if (matches) {
+          verified.push(a);
+          if (verified.length >= 25) break;
+        }
+      } catch {}
+    }
+    if (verified.length > 0) {
+      mergedArticles = verified;
+    }
+  } catch {}
+
   // Return richer profile object with robust multi-search
   return {
     bio: bio,

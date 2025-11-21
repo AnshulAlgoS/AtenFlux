@@ -262,7 +262,7 @@ async function scrapeAuthorsFromPage(url, limit = 50) {
       "a[href*='/people/']",
       "a[href*='/staff/']",
       "a[href*='/writer/']",
-      "a[href*='/topic/']", // For NDTV
+      "a[href*='/topic/']", 
       ".author-name a",
       ".author a",
       ".contributor a",

@@ -115,6 +115,10 @@ router.post("/discover-and-scrape", async (req, res) => {
             console.log(`   Influence: ${authorData.influenceScore}`);
             console.log(`   Total Articles: ${authorData.totalArticles}`);
             
+            // Ensure articles array exists
+            const articlesArray = Array.isArray(authorData.articles) ? authorData.articles : [];
+            const articleLinks = articlesArray.map(a => a.url).filter(url => url);
+            
             // Use profileLink as the unique identifier (it has unique index)
             const profile = await AuthorProfile.findOneAndUpdate(
               { profileLink: authorData.profileUrl },
@@ -123,17 +127,18 @@ router.post("/discover-and-scrape", async (req, res) => {
                   name: authorData.name,
                   outlet: normalizedOutlet, // Use normalized outlet name
                   profileLink: authorData.profileUrl,
-                  profilePic: authorData.profilePicture,
-                  bio: authorData.bio,
-                  role: authorData.role,
-                  email: authorData.email,
-                  socialLinks: authorData.socialLinks,
-                  articles: authorData.totalArticles,
-                  articleLinks: authorData.articles.map(a => a.url),
-                  articleData: authorData.articles,
-                  latestArticle: authorData.articles[0] || null,
-                  topics: authorData.topics || [],
-                  keywords: authorData.keywords || [],
+                  profilePic: authorData.profilePicture || null,
+                  bio: authorData.bio || null,
+                  role: authorData.role || 'Journalist',
+                  email: authorData.email || null,
+                  socialLinks: authorData.socialLinks || {},
+                  articles: articlesArray.length,
+                  articleLinks: articleLinks,
+                  articleData: articlesArray,
+                  latestArticle: articlesArray[0] || null,
+                  topics: Array.isArray(authorData.topics) ? authorData.topics : [],
+                  keywords: Array.isArray(authorData.keywords) ? authorData.keywords : [],
+                  topKeywords: Array.isArray(authorData.topKeywords) ? authorData.topKeywords : [],
                   influence: authorData.influenceScore || 0,
                   scrapedAt: new Date()
                 }
@@ -327,7 +332,7 @@ router.get("/job-status/:jobId", (req, res) => {
 // ============================================================
 router.get("/profiles", async (req, res) => {
   try {
-    const { outlet, limit = 100 } = req.query;
+    const { outlet, limit } = req.query;
     
     const query = outlet ? { outlet } : {};
     
@@ -370,6 +375,23 @@ router.get("/profile/:id", async (req, res) => {
       error: "Failed to fetch profile",
       details: error.message 
     });
+  }
+});
+router.get("/search-by-name", async (req, res) => {
+  try {
+    const { name } = req.query;
+
+    if (!name) {
+      return res.status(400).json({ error: "Name required" });
+    }
+
+    const profile = await AuthorProfile.findOne({
+      name: { $regex: new RegExp("^" + name.trim() + "$", "i") }
+    });
+
+    res.json({ success: true, profile });
+  } catch (err) {
+    res.status(500).json({ error: "Failed", details: err.message });
   }
 });
 

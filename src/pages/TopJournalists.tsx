@@ -7,7 +7,7 @@ import { Footer } from "@/components/Footer";
 import { ParticleBackground } from "@/components/ParticleBackground";
 import { Card } from "@/components/ui/card";
 import { TrendingUp, Award, FileText, ThumbsUp, ThumbsDown, ExternalLink, Mail, Twitter, Linkedin, Facebook, Instagram, X, Eye, RefreshCw, Zap } from "lucide-react";
-import { getFallbackUrls, API_ENDPOINTS } from "@/config/api";
+import { getFallbackUrls, API_ENDPOINTS, API_CONFIG } from "@/config/api";
 
 const MAIN_TOPICS = ["Politics", "Entertainment", "Sports", "Business", "Tech", "Science"];
 const COLORS = ["#10B981", "#EC4899", "#F97316", "#EAB308", "#3B82F6", "#8B5CF6"];
@@ -125,14 +125,21 @@ const TopJournalists = () => {
 
     for (const url of urls) {
       try {
-        const res = await axios.get<Journalist[]>(url);
-        data = res.data.map((j, i) => ({
-          ...j,
-          topics: j.topics?.filter((t) => MAIN_TOPICS.includes(t)).slice(0, 3),
-          color: COLORS[i % COLORS.length],
-        }));
-        console.log(`✅ Fetched ${data.length} journalists from ${url}`);
-        break;
+        const res = await axios.get(url, { timeout: API_CONFIG.TIMEOUT });
+        const payload = res.data as any;
+        const list: Journalist[] = Array.isArray(payload)
+          ? payload
+          : (payload.profiles || payload.journalists || []);
+
+        if (list && list.length > 0) {
+          data = list.map((j, i) => ({
+            ...j,
+            topics: j.topics?.filter((t) => MAIN_TOPICS.includes(t)).slice(0, 3),
+            color: COLORS[i % COLORS.length],
+          }));
+          console.log(`✅ Fetched ${data.length} journalists from ${url}`);
+          break;
+        }
       } catch (err: any) {
         console.warn(`⚠️ Failed to fetch journalists from ${url}:`, err.message);
       }

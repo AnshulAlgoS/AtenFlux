@@ -49,7 +49,7 @@ export default function AuthorsFetcher() {
   const fetchAuthorsWithProfiles = async () => {
     if (!outlet.trim()) {
       setError("Please enter a news outlet name");
-      addLog("❌ No outlet name entered");
+      addLog("No outlet name entered");
       return;
     }
 
@@ -58,55 +58,118 @@ export default function AuthorsFetcher() {
     setAuthors([]);
     setLogs([]);
 
-    addLog(`🚀 Discovering journalists from: "${outlet}"`);
-    addLog(`📊 This will scrape up to 30 authors with full profiles`);
+    addLog(`Discovering journalists from: "${outlet}"`);
+    addLog(`This will collect 200-400 articles, extract unique authors, then scrape profiles`);
 
     const urls = getFallbackUrls(API_ENDPOINTS.DISCOVER_AND_SCRAPE);
-    
+
     addLog(`📡 Trying URLs: ${urls.join(', ')}`);
 
     try {
       let res;
+      let chosenBaseUrl: string | null = null;
       for (const url of urls) {
         try {
-          addLog(`⏳ Attempting: ${url}`);
+          addLog(`Attempting: ${url}`);
           res = await axios.post(
             url,
             { outlet, maxAuthors: 30 },
-            { 
-              headers: { "Cache-Control": "no-cache" }, 
-              timeout: 300000 // 5 minutes for full scraping
+            {
+              headers: { "Cache-Control": "no-cache" },
+              timeout: 30000
             }
           );
-          addLog(`✅ Successfully scraped from ${url}`);
+          addLog(` Scrape job started at ${url}`);
+          const parsed = new URL(url);
+          chosenBaseUrl = `${parsed.protocol}//${parsed.host}`;
+
           break;
         } catch (err: any) {
-          addLog(`⚠️ Failed: ${err.message}`);
+          addLog(` Failed: ${err.message}`);
         }
       }
 
       if (!res) {
-        setError("❌ All backend endpoints failed. Make sure backend is running.");
-        addLog("❌ Failed to scrape from all endpoints");
+        setError(" All backend endpoints failed. Make sure backend is running.");
+        addLog(" Failed to start scrape job on all endpoints");
         return;
       }
 
-      const result = res.data;
-      
-      console.log('📊 API Response:', result);
-      console.log('👥 Authors array:', result.authors);
-      console.log('📈 Authors count:', result.authorsCount);
-      
-      if (!result.authors || result.authors.length === 0) {
-        setError("No authors found for this outlet");
-        addLog("⚠️ No authors discovered");
+      const jobStart = res.data;
+      if (!jobStart?.jobId) {
+        setError("Unexpected response: missing jobId");
+        addLog(`Response did not include jobId: ${JSON.stringify(jobStart)}`);
         return;
       }
 
-      setAuthors(result.authors);
-      addLog(`✅ Discovered ${result.authorsCount} journalists!`);
-      addLog(`💾 Saved ${result.savedToDatabase} profiles to database`);
-      addLog(`📰 Total articles scraped: ${result.authors.reduce((sum, a) => sum + a.totalArticles, 0)}`);
+      const jobId: string = jobStart.jobId;
+      addLog(`Job ID: ${jobId}`);
+      addLog("Monitoring job status...");
+
+      const statusPath = jobStart.statusEndpoint || `${API_ENDPOINTS.JOB_STATUS}/${jobId}`;
+      const statusUrl = `${chosenBaseUrl}${statusPath.startsWith('/') ? statusPath : `/${statusPath}`}`;
+      let completedData: any | null = null;
+
+      const startTime = Date.now();
+      const MAX_WAIT_MS = 15 * 60 * 1000; // 15 minutes - increased for 200-400 articles
+
+      while (!completedData && Date.now() - startTime < MAX_WAIT_MS) {
+        try {
+          const statusRes = await axios.get(statusUrl, { timeout: 10000 });
+          const status = statusRes.data;
+          addLog(`📈 Status: ${status.status} | Progress: ${status.progress}% | Found: ${status.authorsFound || 0}`);
+
+          if (status.status === 'failed') {
+            setError(` Scraping failed: ${status.error || 'Unknown error'}`);
+            addLog(`Job failed: ${status.error || 'Unknown error'}`);
+            return;
+          }
+
+          if (status.status === 'completed') {
+            completedData = status;
+          }
+        } catch (err: any) {
+          addLog(` Status check failed at ${statusUrl}: ${err.message}`);
+        }
+
+        if (completedData) break;
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+
+      if (!completedData) {
+        setError(" Timed out waiting for scraping to complete");
+        addLog(" Timed out while monitoring job status");
+        return;
+      }
+
+      const authorsList = completedData.authors || [];
+      addLog(` Discovered ${completedData.authorsFound || authorsList.length} journalists!`);
+      addLog(` Total articles scraped: ${authorsList.reduce((sum: number, a: any) => sum + (a.totalArticles || 0), 0)}`);
+
+      try {
+        const outletParam = outlet.toLowerCase().trim();
+        const profilesUrl = `${statusUrl.split('/api/authors/job-status')[0]}${API_ENDPOINTS.PROFILES}?outlet=${encodeURIComponent(outletParam)}&limit=100`;
+        addLog(` Fetching saved profiles from ${profilesUrl}`);
+        const dbRes = await axios.get(profilesUrl, { timeout: 20000 });
+        const payload = dbRes.data as any;
+        const list = Array.isArray(payload) ? payload : (payload.profiles || []);
+        const normalized = list.map((p: any) => ({
+          name: p.name,
+          outlet: p.outlet,
+          profileUrl: p.profileLink,
+          totalArticles: p.articles || p.totalArticles || 0,
+          articles: p.articleData || [],
+          bio: p.bio,
+          socialLinks: p.socialLinks || {},
+          scrapedAt: p.scrapedAt,
+          role: p.role,
+        }));
+        setAuthors(normalized);
+        addLog(` Loaded ${normalized.length} profiles from database`);
+      } catch (e: any) {
+        addLog(`⚠️ Failed to load profiles: ${e.message}`);
+        setAuthors(authorsList);
+      }
 
     } catch (err: any) {
       if (err.response?.data?.error) {
@@ -121,7 +184,7 @@ export default function AuthorsFetcher() {
       }
     } finally {
       setLoading(false);
-      addLog("🏁 Process finished");
+      addLog(" Process finished");
     }
   };
 
@@ -139,9 +202,9 @@ export default function AuthorsFetcher() {
   return (
     <div className="max-w-7xl mx-auto mt-16 p-8 rounded-xl shadow-xl font-sans bg-card/80 backdrop-blur-md text-card-foreground animate-fadeIn">
       <h1 className="text-3xl font-bold text-primary font-mono mb-6">
-        🔍 Discover Journalists
+        Discover Journalists
       </h1>
-      
+
       <p className="text-muted-foreground mb-6">
         Enter any news outlet name. We'll automatically discover journalists, scrape their profiles and articles, and save everything to the database.
       </p>
@@ -179,7 +242,7 @@ export default function AuthorsFetcher() {
               Total Articles: {authors.reduce((sum, a) => sum + a.totalArticles, 0)}
             </p>
           </div>
-          
+
           <table className="w-full border-collapse table-auto">
             <thead className="bg-muted text-muted-foreground">
               <tr>
@@ -270,14 +333,14 @@ export default function AuthorsFetcher() {
                   </h2>
                   <div className="flex flex-wrap gap-3 mb-4">
                     <span className="px-4 py-1.5 bg-primary/10 border border-primary text-primary text-sm font-medium font-mono">
-                      📰 {selectedProfile.outlet}
+                       {selectedProfile.outlet}
                     </span>
                     <span className="px-4 py-1.5 bg-secondary/10 border border-secondary text-secondary text-sm font-medium font-mono">
-                      📝 {selectedProfile.totalArticles} articles
+                       {selectedProfile.totalArticles} articles
                     </span>
                     {selectedProfile.role && (
                       <span className="px-4 py-1.5 bg-accent/10 border border-accent text-accent text-sm font-medium font-mono">
-                        👤 {selectedProfile.role}
+                         {selectedProfile.role}
                       </span>
                     )}
                   </div>
@@ -304,7 +367,7 @@ export default function AuthorsFetcher() {
               {selectedProfile.bio && (
                 <div className="mb-6 p-4 bg-muted/30 border border-border">
                   <h3 className="text-lg font-semibold text-primary mb-2 font-mono flex items-center gap-2">
-                    <span>📝</span> Bio
+                    <span></span> Bio
                   </h3>
                   <p className="text-muted-foreground font-mono text-sm leading-relaxed">{selectedProfile.bio}</p>
                 </div>
@@ -320,12 +383,12 @@ export default function AuthorsFetcher() {
                     </a>
                   </div>
                 )}
-                
+
                 <div className="p-4 bg-muted/30 border border-border hover:border-primary/50 transition-colors">
                   <h3 className="text-sm font-semibold text-primary mb-2 font-mono">🔗 Profile URL</h3>
-                  <a 
-                    href={selectedProfile.profileUrl} 
-                    target="_blank" 
+                  <a
+                    href={selectedProfile.profileUrl}
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="text-foreground hover:text-primary transition-colors font-mono text-sm break-all"
                   >
@@ -419,10 +482,10 @@ export default function AuthorsFetcher() {
                               )}
                             </div>
                           </div>
-                          <svg 
-                            className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all flex-shrink-0" 
-                            fill="none" 
-                            stroke="currentColor" 
+                          <svg
+                            className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all flex-shrink-0"
+                            fill="none"
+                            stroke="currentColor"
                             viewBox="0 0 24 24"
                           >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -449,12 +512,12 @@ export default function AuthorsFetcher() {
                     <span className="text-muted-foreground">Status:</span>
                     <span className="text-success font-semibold">✅ Saved</span>
                   </div>
-                  
+
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Scraped:</span>
                     <span className="text-foreground">{new Date(selectedProfile.scrapedAt).toLocaleDateString()}</span>
                   </div>
-                  
+
                   <div className="flex justify-between col-span-1 md:col-span-2">
                     <span className="text-muted-foreground">ID:</span>
                     <span className="text-foreground text-xs break-all">{selectedProfile._id}</span>
