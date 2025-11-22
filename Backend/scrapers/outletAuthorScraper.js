@@ -9,10 +9,6 @@ const SERP_API_KEY = process.env.SERP_API_KEY;
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ============================================================
-// HELPER FUNCTIONS FOR AUTHOR DEDUPLICATION
-// ============================================================
-
 function normalizeAuthorName(name) {
   if (!name) return '';
   return name
@@ -20,7 +16,7 @@ function normalizeAuthorName(name) {
     .trim()
     .replace(/&amp;/gi, '&')
     .replace(/&nbsp;/gi, ' ')
-    .replace(/[^\w\s\u0900-\u097F\u0980-\u09FF]/g, '') // Remove special chars except Unicode
+    .replace(/[^\w\s\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F]/g, '') // Remove special chars except Unicode
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -29,12 +25,8 @@ function areNamesSimilar(name1, name2) {
   const norm1 = normalizeAuthorName(name1);
   const norm2 = normalizeAuthorName(name2);
   
-  // Exact match
   if (norm1 === norm2) return true;
-  
-  // Check if one contains the other (for variations)
   if (norm1.includes(norm2) || norm2.includes(norm1)) {
-    // Only if the shorter one is at least 70% of the longer one
     const shorter = norm1.length < norm2.length ? norm1 : norm2;
     const longer = norm1.length >= norm2.length ? norm1 : norm2;
     if (shorter.length >= longer.length * 0.7) {
@@ -56,14 +48,16 @@ function authorExists(newAuthor, existingMap) {
   return false;
 }
 
-// ============================================================
-// UNIVERSAL INTELLIGENT SCRAPER - NO HARDCODED URLS
-// Discovers outlet structure and authors dynamically
-// ============================================================
-
-/**
- * Main scraping function - fully dynamic and adaptive
- */
+const OUTLET_OVERRIDES = [
+  {
+    url: 'https://www.dinamalar.com',
+    keywords: ['dinamalar', 'dina malar'],
+  },
+  {
+    url: 'https://www.manoramaonline.com',
+    keywords: ['malayala manorama', 'malayalam manorama', 'manoramaonline', 'manorama online', 'manorama'],
+  }
+];
 export async function scrapeOutletIntelligent(outletName, maxAuthors = 35) {
   console.log(`\n${'='.repeat(80)}`);
   console.log(`INTELLIGENT UNIVERSAL SCRAPER`);
@@ -144,7 +138,6 @@ export async function scrapeOutletIntelligent(outletName, maxAuthors = 35) {
       return { error: 'No valid authors found', outlet: outletName, website };
     }
 
-    // Limit to maxAuthors (30-40) to avoid over-scraping
     if (authors.length > maxAuthors) {
       console.log(`\n Found ${authors.length} authors, limiting to ${maxAuthors} as requested`);
       authors = authors.slice(0, maxAuthors);
@@ -152,22 +145,18 @@ export async function scrapeOutletIntelligent(outletName, maxAuthors = 35) {
 
     console.log(`\n Found ${authors.length} valid unique journalists after validation`);
 
-    // FALLBACK: If we don't have enough authors, try additional strategies (but limit to maxAuthors)
     if (authors.length < maxAuthors && authors.length < 40) {
       console.log(`\n⚠️  Only found ${authors.length} authors (target: ${maxAuthors}). Trying additional discovery...`);
       
-      // Try to find more authors from homepage and section pages directly
       try {
         const page = await browser.newPage();
         await page.setUserAgent(getRandomUserAgent());
         page.setDefaultTimeout(15000);
         page.setDefaultNavigationTimeout(15000);
         
-        // Try homepage
         await page.goto(website, { waitUntil: 'domcontentloaded', timeout: 15000 });
         await delay(1000);
-        
-        // Scroll and extract more article URLs
+
         for (let i = 0; i < 3; i++) {
           await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
           await delay(300);
@@ -179,12 +168,9 @@ export async function scrapeOutletIntelligent(outletName, maxAuthors = 35) {
         if (additionalArticles.length > 0) {
           console.log(`  Found ${additionalArticles.length} additional articles from homepage`);
           const additionalAuthors = await extractAuthorsFromArticles(additionalArticles, website, browser, maxAuthors - authors.length);
-          
-          // Merge with existing authors
           const existingNames = new Set(authors.map(a => normalizeAuthorName(a.name)));
           for (const author of additionalAuthors) {
             if (isValidJournalistName(author.name) && !existingNames.has(normalizeAuthorName(author.name))) {
-              // Check for fuzzy duplicates
               let isDuplicate = false;
               for (const existing of authors) {
                 if (areNamesSimilar(author.name, existing.name)) {
@@ -268,11 +254,19 @@ export async function scrapeOutletIntelligent(outletName, maxAuthors = 35) {
 async function detectOutletWebsite(outletName, browser) {
   console.log(`\nDetecting website for: ${outletName}...`);
   
+  const normalizedOutlet = outletName.toLowerCase();
+  const override = OUTLET_OVERRIDES.find(entry => 
+    entry.keywords.some(keyword => normalizedOutlet.includes(keyword))
+  );
+  if (override) {
+    console.log(`   ✓ Using preset website for ${outletName}: ${override.url}`);
+    return override.url;
+  }
+  
   const page = await browser.newPage();
   await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
 
   try {
-    // Strategy 1: Try DuckDuckGo (no CAPTCHA issues)
     console.log(`   Strategy 1: Searching DuckDuckGo...`);
     
     try {
@@ -746,7 +740,7 @@ async function collectArticlesFromWebsite(website, browser, targetCount = 300) {
   
   // Set extra headers
   await page.setExtraHTTPHeaders({
-    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8,ta;q=0.75,ml;q=0.7',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
@@ -764,7 +758,7 @@ async function collectArticlesFromWebsite(website, browser, targetCount = 300) {
   await page.evaluateOnNewDocument(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => false });
     Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'hi', 'bn', 'gu'] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'hi', 'bn', 'gu', 'ta', 'ml'] });
     Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' });
     Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
     Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
@@ -848,7 +842,7 @@ async function collectArticlesFromWebsite(website, browser, targetCount = 300) {
         const sectionPage = await browser.newPage();
         await sectionPage.setUserAgent(getRandomUserAgent());
         await sectionPage.setExtraHTTPHeaders({
-          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8,ta;q=0.75,ml;q=0.7',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
           'Referer': website
         });
@@ -995,6 +989,7 @@ async function extractArticleUrlsFromPage(page, website) {
         if (url.hostname !== baseUrlObj.hostname) continue;
         
         const pathname = url.pathname;
+        const search = url.search || '';
         let domainOk = true;
         const host = baseUrlObj.hostname.toLowerCase();
         if (host.includes('ndtv')) {
@@ -1003,8 +998,18 @@ async function extractArticleUrlsFromPage(page, website) {
           domainOk = (/(entertainment|news|story)/i.test(pathname) && !/\/video\//i.test(pathname));
         } else if (host.includes('bbc')) {
           domainOk = (/\/news\//.test(pathname) || /\/sport\//.test(pathname) || /\/business\//.test(pathname) || /\/\d{4}\//.test(pathname));
+        } else if (host.includes('dinamalar')) {
+          domainOk = pathname.includes('news') || pathname.includes('article') || /detail/i.test(pathname);
+        } else if (host.includes('manorama')) {
+          domainOk = pathname.includes('/news') || pathname.includes('/story') || pathname.includes('/news-updates');
         }
         if (!domainOk) continue;
+        
+        const queryHasNumericId = /(?:[?&])(id|storyid|nid|contentid|newsid)=\d{4,}/i.test(search);
+        const endsWithAsp = pathname.endsWith('.asp') || pathname.endsWith('.aspx') || pathname.endsWith('.htm');
+        const looksLikeRegionalArticle =
+          (host.includes('dinamalar') && (pathname.includes('news') || pathname.includes('detail') || queryHasNumericId)) ||
+          (host.includes('manorama') && (pathname.includes('/news') || pathname.includes('/story') || pathname.includes('/news-updates')));
         
         // Article detection
         const isArticle =
@@ -1014,9 +1019,14 @@ async function extractArticleUrlsFromPage(page, website) {
           /\d{8,}\.html/.test(pathname) ||
           /\/(article|story|news|post|blog)\/.+/.test(pathname) ||
           (pathname.includes('/news/') && pathname.length > 20) ||
-          (pathname.length > 20 && !pathname.includes('/author/') && !pathname.includes('/tag/') && !pathname.includes('/category/'));
+          (pathname.length > 20 && !pathname.includes('/author/') && !pathname.includes('/tag/') && !pathname.includes('/category/')) ||
+          (endsWithAsp && (pathname.includes('news') || pathname.includes('story') || pathname.includes('detail'))) ||
+          (queryHasNumericId && (pathname.includes('news') || pathname.includes('story') || host.includes('dinamalar'))) ||
+          looksLikeRegionalArticle;
         
-        if (isArticle && pathname.length > 15) {
+        const minPathLength = host.includes('dinamalar') ? 10 : 15;
+        
+        if (isArticle && pathname.length >= minPathLength) {
           urls.add(href);
           if (urls.size >= 120) break;
         }
@@ -1117,20 +1127,22 @@ async function extractAuthorsFromArticles(articles, website, browser, limit) {
 
 async function discoverSectionPages(website, page) {
   const sections = new Set();
+  const site = website.replace(/\/$/, '');
   
   try {
     await page.goto(website, { waitUntil: 'domcontentloaded', timeout: 20000 });
     
     // Extract navigation links that look like sections
     const sectionUrls = await page.evaluate((baseUrl) => {
-      const urls = [];
+      const prioritized = [];
+      const fallback = [];
       const links = document.querySelectorAll('nav a, header a, [role="navigation"] a, .menu a');
       
       for (const link of links) {
         const href = link.href;
-        const text = link.textContent?.trim().toLowerCase();
+        const text = link.textContent?.trim().toLowerCase() || '';
         
-        if (!href || !text) continue;
+        if (!href) continue;
         
         // Check if this looks like a section (not homepage, not external)
         const url = new URL(href);
@@ -1138,22 +1150,44 @@ async function discoverSectionPages(website, page) {
         
         if (url.hostname !== baseUrlObj.hostname) continue;
         if (href === baseUrl || href === baseUrl + '/') continue;
+        if (href.includes('#')) continue;
         
         // Common section keywords
         const sectionKeywords = ['news', 'business', 'sports', 'entertainment', 'tech', 
                                  'world', 'national', 'india', 'politics', 'lifestyle',
-                                 'opinion', 'health', 'science', 'education', 'city'];
+                                 'opinion', 'health', 'science', 'education', 'city',
+                                 'kerala', 'pravasi', 'gulf', 'malayalam', 'movie', 'cinema',
+                                 'auto', 'devotional', 'spiritual', 'travel', 'metro', 'crime',
+                                 'technology', 'culture', 'kids', 'youth'];
         
         const isSectionLink = sectionKeywords.some(keyword => 
           text.includes(keyword) || href.toLowerCase().includes('/' + keyword)
         );
         
-        if (isSectionLink && !href.includes('#') && !href.includes('/tag/') && !href.includes('/category/')) {
-          urls.push(href);
+        if (isSectionLink && !href.includes('/tag/') && !href.includes('/category/')) {
+          if (!prioritized.includes(href)) prioritized.push(href);
+        } else if (!fallback.includes(href)) {
+          fallback.push(href);
         }
       }
       
-      return urls;
+      const combined = [];
+      const seen = new Set();
+      const pushUnique = (list) => {
+        for (const entry of list) {
+          if (seen.has(entry)) continue;
+          seen.add(entry);
+          combined.push(entry);
+          if (combined.length >= 20) break;
+        }
+      };
+      
+      pushUnique(prioritized);
+      if (combined.length < 10) {
+        pushUnique(fallback);
+      }
+      
+      return combined;
     }, website);
     
     sectionUrls.forEach(url => sections.add(url));
@@ -1161,18 +1195,42 @@ async function discoverSectionPages(website, page) {
     const host = new URL(website).hostname.toLowerCase();
     if (host.includes('pinkvilla')) {
       const seeds = [
-        `${website}/entertainment`,
-        `${website}/entertainment/bollywood`,
-        `${website}/entertainment/hollywood`,
-        `${website}/entertainment/korean`,
-        `${website}/entertainment/south`,
-        `${website}/entertainment/tv`,
-        `${website}/news`,
-        `${website}/lifestyle`,
-        `${website}/fashion`,
-        `${website}/beauty`,
-        `${website}/health`,
-        `${website}/reviews`
+        `${site}/entertainment`,
+        `${site}/entertainment/bollywood`,
+        `${site}/entertainment/hollywood`,
+        `${site}/entertainment/korean`,
+        `${site}/entertainment/south`,
+        `${site}/entertainment/tv`,
+        `${site}/news`,
+        `${site}/lifestyle`,
+        `${site}/fashion`,
+        `${site}/beauty`,
+        `${site}/health`,
+        `${site}/reviews`
+      ];
+      for (const s of seeds) sections.add(s);
+    } else if (host.includes('dinamalar')) {
+      const seeds = [
+        `${site}/latest_news.asp`,
+        `${site}/latest_news.asp?cat=1`,
+        `${site}/sports_news.asp`,
+        `${site}/world_news.asp`,
+        `${site}/cinema_news.asp`,
+        `${site}/politics_news.asp`,
+        `${site}/business_news.asp`
+      ];
+      for (const s of seeds) sections.add(s);
+    } else if (host.includes('manorama')) {
+      const seeds = [
+        `${site}/news/kerala`,
+        `${site}/news/india`,
+        `${site}/news/world`,
+        `${site}/news/latest-news`,
+        `${site}/news/kerala/thiruvananthapuram`,
+        `${site}/news/kerala/kottayam`,
+        `${site}/sports`,
+        `${site}/business`,
+        `${site}/lifestyle`
       ];
       for (const s of seeds) sections.add(s);
     }
@@ -1237,6 +1295,7 @@ async function extractAuthorsFromPage(page, pageUrl, limit = 50) {
         try {
           const url = new URL(href);
           const pathname = url.pathname;
+          const search = url.search || '';
           let domainOk = true;
           const host = baseUrlObj.hostname.toLowerCase();
 
@@ -1244,9 +1303,19 @@ async function extractAuthorsFromPage(page, pageUrl, limit = 50) {
             domainOk = (/\/news\//.test(pathname) || /\/india\//.test(pathname) || /\/world\//.test(pathname) || /-\d{5,}/.test(pathname));
           } else if (host.includes('pinkvilla')) {
             domainOk = (/(entertainment|news|story)/i.test(pathname) && !/\/video\//i.test(pathname));
+          } else if (host.includes('dinamalar')) {
+            domainOk = pathname.includes('news') || pathname.includes('article') || /detail/i.test(pathname);
+          } else if (host.includes('manorama')) {
+            domainOk = pathname.includes('/news') || pathname.includes('/story') || pathname.includes('/news-updates');
           }
 
           if (!domainOk) continue;
+          
+          const queryHasNumericId = /(?:[?&])(id|storyid|nid|contentid|newsid)=\d{4,}/i.test(search);
+          const endsWithAsp = pathname.endsWith('.asp') || pathname.endsWith('.aspx') || pathname.endsWith('.htm');
+          const looksLikeRegionalArticle =
+            (host.includes('dinamalar') && (pathname.includes('news') || pathname.includes('detail') || queryHasNumericId)) ||
+            (host.includes('manorama') && (pathname.includes('/news') || pathname.includes('/story') || pathname.includes('/news-updates')));
           
           const looksLikeArticle = 
             /\/\d{4}\/\d{1,2}\/\d{1,2}\/.+/.test(pathname) ||
@@ -1256,10 +1325,17 @@ async function extractAuthorsFromPage(page, pageUrl, limit = 50) {
             /\/(article|story|news|post|blog)\/.+/.test(pathname) ||
             /\/(national|world|india|business|sports|entertainment|tech|science|health|lifestyle|opinion)\/.+/.test(pathname) ||
             (pathname.includes('/news') && pathname.length > 20) ||
-            (/\d{5,}/.test(pathname) && pathname.length > 15);
+            (/\d{5,}/.test(pathname) && pathname.length > 15) ||
+            (endsWithAsp && (pathname.includes('news') || pathname.includes('story') || pathname.includes('detail'))) ||
+            (queryHasNumericId && (pathname.includes('news') || pathname.includes('story') || host.includes('dinamalar'))) ||
+            looksLikeRegionalArticle;
           
-          const hasDepth = pathname.split('/').filter(p => p).length >= 2;
-          const notTooShort = pathname.length > 15;
+          let hasDepth = pathname.split('/').filter(p => p).length >= 2;
+          if (!hasDepth && host.includes('dinamalar') && queryHasNumericId) {
+            hasDepth = true;
+          }
+          const minPathLength = host.includes('dinamalar') ? 10 : 15;
+          const notTooShort = pathname.length >= minPathLength;
           
           if (looksLikeArticle && hasDepth && notTooShort) {
             urls.add(href);
@@ -1333,9 +1409,11 @@ function isValidJournalistName(name) {
   // Length check
   if (cleaned.length < 5 || cleaned.length > 60) return false;
   
-  // Must have at least 2 words (First Last)
+  // Must have words, but allow single-word Indic names
   const words = cleaned.split(/\s+/).filter(w => w.length > 0);
-  if (words.length < 2 || words.length > 5) return false;
+  const usesIndicScript = /[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F]/.test(cleaned);
+  if (!usesIndicScript && (words.length < 2 || words.length > 5)) return false;
+  if (usesIndicScript && (words.length < 1 || words.length > 6)) return false;
   
   const lowerName = cleaned.toLowerCase();
   if (/(desk|team|bureau)/i.test(lowerName)) return false;
@@ -1391,7 +1469,7 @@ function isValidJournalistName(name) {
   }
   
   // Must contain only valid characters (no HTML entities)
-  if (!/^[A-Za-z\u0900-\u097F\u0980-\u09FF\s\.\-\']+$/.test(cleaned)) return false;
+  if (!/^[A-Za-z\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F\s\.\-\']+$/.test(cleaned)) return false;
   
   // Reject if too many digits
   const digitCount = (cleaned.match(/\d/g) || []).length;
@@ -1401,7 +1479,7 @@ function isValidJournalistName(name) {
   if (words.some(word => word.length < 2)) return false;
   
   // Must start with capital letter (for English names)
-  if (/^[a-z]/.test(cleaned) && !/^[\u0900-\u097F\u0980-\u09FF]/.test(cleaned)) return false;
+  if (/^[a-z]/.test(cleaned) && !usesIndicScript) return false;
   
   // Reject single-word names that are common invalid terms
   if (words.length === 1 && ['bureau', 'desk', 'team', 'staff', 'editorial'].includes(lowerName)) {
@@ -1419,6 +1497,7 @@ async function extractAuthorFromArticle(page, baseUrl) {
   const result = await page.evaluate((base) => {
     let authorName = null;
     let authorUrl = null;
+    const host = new URL(base).hostname.toLowerCase();
     
     // Method 1: JSON-LD Structured Data (HIGHEST PRIORITY - most reliable)
     const scripts = document.querySelectorAll('script[type="application/ld+json"]');
@@ -1444,7 +1523,7 @@ async function extractAuthorFromArticle(page, baseUrl) {
           if (authorName) {
             // Only use constructed URL if we don't have a real one
             if (!authorUrl || !authorUrl.startsWith('http')) {
-              const slug = authorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+              const slug = authorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F-]/g, '');
               const baseUrlObj = new URL(base);
               authorUrl = `${baseUrlObj.origin}/author/${slug}`;
             }
@@ -1475,7 +1554,10 @@ async function extractAuthorFromArticle(page, baseUrl) {
       '.pst-by a',
       '.auth_name a',
       'span.posted-by a',
-      'a[itemprop="author"]'
+      'a[itemprop="author"]',
+      '.newsdet-author a',
+      '.story-author__name a',
+      '.mm-author-name a'
     ];
     
     for (const selector of authorLinkSelectors) {
@@ -1497,7 +1579,7 @@ async function extractAuthorFromArticle(page, baseUrl) {
       const name = metaAuthor.content.trim();
       if (name) {
         // No actual profile URL from meta, construct one
-        const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+        const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F-]/g, '');
         const baseUrlObj = new URL(base);
         const profileUrl = `${baseUrlObj.origin}/author/${slug}`;
         return { name, profileUrl };
@@ -1519,7 +1601,14 @@ async function extractAuthorFromArticle(page, baseUrl) {
       'div[class*="byline"]',
       '.article-author',
       '.story-author',
-      '.post-author'
+      '.post-author',
+      '.newsdet-author',
+      '.article_author',
+      '.author_txt',
+      '.mm-author-name',
+      '.story-author__name',
+      '.manorama-author',
+      '[class*="authorname"]'
     ];
     
     for (const selector of authorTextSelectors) {
@@ -1542,8 +1631,8 @@ async function extractAuthorFromArticle(page, baseUrl) {
         
         // Clean up prefixes/suffixes
         name = name
-          .replace(/^(by|written by|posted by|author:?|द्वारा|लेखक:?|লেখক:?)\s+/i, '')
-          .replace(/\s+(reporter|correspondent|journalist|लेखक|संवाददाता)$/i, '')
+          .replace(/^(by|written by|posted by|author:?|द्वारा|लेखक:?|लिखित:?|লেখক:?|লিখেছেন:?|எழுதியவர்:?|எழுதி:?|எழுதியது:?|லேககர்:?|லேககன்:?|லேககள்:?|లేఖకుడు:?|ലേഖകന്‍:?|ലേഖകൻ:?|ലേഖിക:?|എഴുതി:?|രചിച്ചത്:?|വാർത്ത:?)/i, '')
+          .replace(/\s+(reporter|correspondent|journalist|लेखक|संवाददाता|செய்தியாளர்|വാർത്താവതാരകൻ)$/i, '')
           .replace(/\s*&amp;\s*/gi, ' & ')
           .trim();
         
@@ -1554,10 +1643,43 @@ async function extractAuthorFromArticle(page, baseUrl) {
             !/(updated|published|posted|edited|ago|am|pm|ist|gmt|minutes|hours|days)/i.test(name)) {
           
             // No actual profile URL found, construct one
-            const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+            const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F-]/g, '');
             const baseUrlObj = new URL(base);
             const profileUrl = `${baseUrlObj.origin}/author/${slug}`;
             return { name, profileUrl };
+        }
+      }
+    }
+    
+    if (!authorName) {
+      const siteSpecificSelectors = [];
+      if (host.includes('dinamalar')) {
+        siteSpecificSelectors.push(
+          '.newsdet-author',
+          '#ctl00_ContentPlaceHolder1_LblReporter',
+          '#ContentPlaceHolder1_LblReporter',
+          '.story-author',
+          '.author_txt'
+        );
+      } else if (host.includes('manorama')) {
+        siteSpecificSelectors.push(
+          '.article-author-name',
+          '.mm-author-name',
+          '.story-author__name',
+          '.manorama-author',
+          '.article_author'
+        );
+      }
+      
+      for (const selector of siteSpecificSelectors) {
+        const el = document.querySelector(selector);
+        if (!el) continue;
+        const text = el.textContent?.trim();
+        if (text && text.length >= 3) {
+          const slug = text.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F-]/g, '');
+          const baseUrlObj = new URL(base);
+          const profileUrl = `${baseUrlObj.origin}/author/${slug}`;
+          return { name: text, profileUrl };
         }
       }
     }
@@ -1570,7 +1692,9 @@ async function extractAuthorFromArticle(page, baseUrl) {
       // Patterns for different formats
       const patterns = [
         /(?:By|द्वारा|লিখেছেন)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/,
-        /(?:By|द्वारा|লিখেছেন)\s+([\u0900-\u097F]+(?:\s+[\u0900-\u097F]+){1,3})/,
+        /(?:By|द्वारा|लिखित|लिखा|লিখেছেন)\s+([\u0900-\u097F\u0980-\u09FF]+(?:\s+[\u0900-\u097F\u0980-\u09FF]+){1,3})/,
+        /(?:By|द्वारा|लिखित|लिखा|লিখেছেন|எழுதியவர்|எழுதி|எழுதியது|லேககர்)\s+([\u0B80-\u0BFF]+(?:\s+[\u0B80-\u0BFF]+){0,3})/,
+        /(?:By|ദ്വാര|ലേഖകൻ|ലേഖിക|എഴുതി|രചിച്ചത്)\s+([\u0D00-\u0D7F]+(?:\s+[\u0D00-\u0D7F]+){0,3})/,
         /^([A-Z][a-z]+\s+[A-Z][a-z]+)\s*\|/m
       ];
       
@@ -1580,7 +1704,7 @@ async function extractAuthorFromArticle(page, baseUrl) {
           const name = match[1].trim();
           if (name && name.length >= 5 && name.length < 50) {
             // No actual profile URL found, construct one
-            const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F-]/g, '');
+            const slug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F-]/g, '');
             const baseUrlObj = new URL(base);
             const profileUrl = `${baseUrlObj.origin}/author/${slug}`;
             return { name, profileUrl };
@@ -2090,7 +2214,7 @@ async function extractAuthorData(author, outletName, browser, website) {
       await page.evaluateOnNewDocument(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => false });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'hi', 'bn', 'gu'] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'hi', 'bn', 'gu', 'ta', 'ml'] });
       });
     }
   } catch {}
