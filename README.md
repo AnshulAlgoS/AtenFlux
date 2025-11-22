@@ -66,3 +66,60 @@ git clone <https://github.com/AnshulAlgoS/AtenFlux>
 cd <AtenFlux>
 npm install
 npm run dev
+
+---
+
+## 🔌 API Endpoints
+
+- `POST /api/authors/discover-and-scrape` – start a scrape job for an outlet
+- `GET /api/authors/job-status/:jobId` – poll job progress and results
+- `GET /api/authors/profiles?outlet=<name>&limit=100` – list saved profiles
+- `GET /top-journalists` – top influencers for the dashboard
+
+---
+
+## 🧠 How It Works
+
+1. Detect outlet website automatically.
+2. Collect ~300 articles across sections and paginated lists.
+3. Extract unique authors from collected articles.
+4. Validate names and deduplicate.
+5. Verify each article belongs to the author via byline/JSON‑LD checks.
+6. Enrich topics/keywords and compute influence.
+7. Save/upsert to MongoDB; frontend loads combined saved profiles.
+
+---
+
+## ⚙️ Environment Setup (Backend/.env)
+
+```env
+PORT=5002
+MONGO_URI=<your-mongodb-uri>
+SERP_API_KEY=<your-serpapi-key>
+```
+
+- Get SERP API key at https://serpapi.com/
+- Keep credentials private; do not commit `.env`
+
+---
+
+## 🧪 Quick Test
+
+```bash
+curl -X POST http://localhost:5002/api/authors/discover-and-scrape \
+  -H 'Content-Type: application/json' \
+  -d '{"outlet":"Pink Villa","maxAuthors":30}'
+
+curl http://localhost:5002/api/authors/job-status/<jobId>
+
+curl 'http://localhost:5002/api/authors/profiles?outlet=pink%20villa&limit=100'
+```
+
+---
+
+## 🛠️ Tech Stack
+
+- Frontend: React, TypeScript, Vite, Tailwind, D3
+- Backend: Node.js, Express, Puppeteer, Axios
+- Database: MongoDB
+- External: SERP API
