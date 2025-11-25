@@ -22,8 +22,8 @@ export const FiltersPanel = ({ topics, outlets: propsOutlets = [], onFilterChang
     const fetchOutlets = async () => {
       setLoading(true);
       const urls = [
-        'http://localhost:5002/api/authors/profiles',
         'https://aten-131r.onrender.com/api/authors/profiles',
+        'http://localhost:5002/api/authors/profiles',
       ];
 
       let authors: any[] | null = null;

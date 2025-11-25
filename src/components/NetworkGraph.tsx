@@ -58,10 +58,10 @@ export const NetworkGraph = ({ selectedTopics = [], selectedOutlets = [] }: { se
       setError(null);
       
       const urls = [
-        'http://localhost:5002/api/authors/profiles',
-        'http://localhost:5002/authorprofiles',
         'https://aten-131r.onrender.com/api/authors/profiles',
-        'https://aten-131r.onrender.com/authorprofiles'
+        'https://aten-131r.onrender.com/authorprofiles',
+        'http://localhost:5002/api/authors/profiles',
+        'http://localhost:5002/authorprofiles'
       ];
 
       let authors: any[] | null = null;

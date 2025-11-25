@@ -51,7 +51,7 @@ const Topics = () => {
 
   useEffect(() => {
     const fetchTopics = async () => {
-      const urls = ["http://localhost:5002/topics", "https://aten-131r.onrender.com/topics"];
+      const urls = ["https://aten-131r.onrender.com/topics", "http://localhost:5002/topics"];
       let data: Topic[] | null = null;
 
       for (const url of urls) {
@@ -81,8 +81,8 @@ const Topics = () => {
 
     const fetchOutlets = async () => {
       const urls = [
-        "http://localhost:5002/api/authors/profiles",
-        "https://aten-131r.onrender.com/api/authors/profiles"
+        "https://aten-131r.onrender.com/api/authors/profiles",
+        "http://localhost:5002/api/authors/profiles"
       ];
 
       for (const url of urls) {

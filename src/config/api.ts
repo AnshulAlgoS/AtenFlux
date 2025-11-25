@@ -7,10 +7,10 @@ export const API_CONFIG = {
     ? 'http://localhost:5002'  // Local backend
     : 'https://aten-131r.onrender.com',  // Production backend
 
-  // Fallback URLs (try local first, then production)
+  // Fallback URLs (try production first, then local)
   FALLBACK_URLS: [
-    'http://localhost:5002',
-    'https://aten-131r.onrender.com'
+    'https://aten-131r.onrender.com',
+    'http://localhost:5002'
   ],
 
   TIMEOUT: 60000, // 60 seconds

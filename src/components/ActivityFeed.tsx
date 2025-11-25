@@ -20,8 +20,8 @@ export const ActivityFeed = () => {
     const fetchActivities = async () => {
       try {
         const urls = [
-          "http://localhost:5002/api/authors/profiles",
-          "https://aten-131r.onrender.com/api/authors/profiles"
+          "https://aten-131r.onrender.com/api/authors/profiles",
+          "http://localhost:5002/api/authors/profiles"
         ];
         
         let profiles: any[] = [];
