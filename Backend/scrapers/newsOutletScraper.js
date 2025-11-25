@@ -34,13 +34,19 @@ function normalizeAuthorName(name) {
     .trim();
 }
 
-function isValidJournalistName(name) {
-  if (!name || typeof name !== 'string') return false;
+function isValidJournalistName(name, debug = false) {
+  if (!name || typeof name !== 'string') {
+    if (debug) console.log(`      ❌ Not a string or empty`);
+    return false;
+  }
   
   const trimmed = name.trim();
   
   // Length validation (more lenient)
-  if (trimmed.length < 3 || trimmed.length > 80) return false;
+  if (trimmed.length < 3 || trimmed.length > 80) {
+    if (debug) console.log(`      ❌ Length out of range: ${trimmed.length} chars`);
+    return false;
+  }
   
   const words = trimmed.split(/\s+/);
   
@@ -65,7 +71,10 @@ function isValidJournalistName(name) {
     'press trust of india', 'associated press', 'agence france-presse'
   ];
   
-  if (WIRE_SERVICES.includes(lowerName)) return false;
+  if (WIRE_SERVICES.includes(lowerName)) {
+    if (debug) console.log(`      ❌ Wire service name`);
+    return false;
+  }
   
   // REJECT: Generic institutional bylines (English)
   const INVALID_PATTERNS = [
@@ -77,7 +86,10 @@ function isValidJournalistName(name) {
   ];
   
   for (const pattern of INVALID_PATTERNS) {
-    if (pattern.test(lowerName)) return false;
+    if (pattern.test(lowerName)) {
+      if (debug) console.log(`      ❌ Matches invalid pattern: ${pattern}`);
+      return false;
+    }
   }
   
   // REJECT: Generic role titles used as names
@@ -87,7 +99,10 @@ function isValidJournalistName(name) {
     'special correspondent', 'contributing writer', 'guest writer'
   ];
   
-  if (GENERIC_ROLES.includes(lowerName)) return false;
+  if (GENERIC_ROLES.includes(lowerName)) {
+    if (debug) console.log(`      ❌ Generic role title`);
+    return false;
+  }
   
   // REJECT: Generic terms in Indian languages (exact match only)
   const GENERIC_TERMS_EXACT = [
@@ -111,7 +126,10 @@ function isValidJournalistName(name) {
     'ਰਿਪੋਰਟਰ', 'ਲੇਖਕ', 'ਵਿਸ਼ੇਸ਼ ਰਿਪੋਰਟਰ',
   ];
   
-  if (GENERIC_TERMS_EXACT.includes(trimmed)) return false;
+  if (GENERIC_TERMS_EXACT.includes(trimmed)) {
+    if (debug) console.log(`      ❌ Generic Indian language term`);
+    return false;
+  }
   
   // REJECT: Outlet names being used as author names
   const OUTLET_NAMES = [
@@ -120,23 +138,32 @@ function isValidJournalistName(name) {
     'தினமலர்', 'தினகரன்', 'தினத்தந்தி'  // Tamil outlets
   ];
   
-  if (OUTLET_NAMES.includes(lowerName)) return false;
+  if (OUTLET_NAMES.includes(lowerName)) {
+    if (debug) console.log(`      ❌ Outlet name (not a person)`);
+    return false;
+  }
   
   // Must contain valid characters (letters, spaces, dots, hyphens, apostrophes, commas + all Indic scripts)
   if (!/^[A-Za-z\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF\s\.\-\'\,]+$/.test(trimmed)) {
+    if (debug) console.log(`      ❌ Contains invalid characters`);
     return false;
   }
   
   // REJECT: Too many digits (likely IDs or codes)
   const digitCount = (trimmed.match(/\d/g) || []).length;
-  if (digitCount > 3) return false;
+  if (digitCount > 3) {
+    if (debug) console.log(`      ❌ Too many digits: ${digitCount}`);
+    return false;
+  }
   
   // REJECT: All caps with no lowercase (likely acronyms or labels like "NEWS DESK")
   if (!usesIndicScript && trimmed === trimmed.toUpperCase() && trimmed.length < 8 && !/\s/.test(trimmed)) {
+    if (debug) console.log(`      ❌ All caps (acronym/label)`);
     return false;
   }
   
   // ACCEPT: Everything else that passed the filters
+  if (debug) console.log(`      ✅ PASSED all validation checks`);
   return true;
 }
 
@@ -988,6 +1015,18 @@ async function extractAuthorsFromArticles(articles, website, maxAuthors = 35) {
             
             const data = JSON.parse(jsonText);
             
+            // DEBUG: For first article, show what's in JSON-LD
+            if (processed === 0 && idx === 0 && article.url.includes('indiatoday')) {
+              console.log(`\n  🔬 JSON-LD DEBUG (Script ${idx + 1}):`);
+              console.log(`     @type: ${data['@type'] || 'N/A'}`);
+              console.log(`     Has author: ${!!data.author}`);
+              console.log(`     Has creator: ${!!data.creator}`);
+              if (data.author) {
+                console.log(`     Author type: ${typeof data.author}`);
+                console.log(`     Author value: ${JSON.stringify(data.author).substring(0, 100)}`);
+              }
+            }
+            
             // Handle different JSON-LD structures
             const structures = [data];
             if (data['@graph']) structures.push(...data['@graph']);
@@ -1018,13 +1057,30 @@ async function extractAuthorsFromArticles(articles, website, maxAuthors = 35) {
                 }
               }
               
+              // DEBUG: Show validation results for first article
+              const isFirstArticle = processed === 0 && idx === 0;
+              
+              if (isFirstArticle && authorNames.length > 0) {
+                console.log(`\n  🧪 Validation Test (${authorNames.length} names found):`);
+                authorNames.forEach(name => {
+                  console.log(`\n     Testing: "${name}"`);
+                  const valid = isValidJournalistName(name, true); // Enable debug
+                  console.log(`     Result: ${valid ? '✅ VALID - Will be added' : '❌ REJECTED - Filtered out'}`);
+                });
+              }
+              
               for (const authorName of authorNames) {
-                if (authorName && isValidJournalistName(authorName)) {
+                if (authorName && isValidJournalistName(authorName, false)) {
                   foundAuthors.push({ name: authorName.trim(), source: 'json-ld' });
                 }
               }
             }
-          } catch (e) {}
+          } catch (e) {
+            // DEBUG: Show JSON parse errors for first article
+            if (processed === 0 && idx === 0) {
+              console.log(`     ⚠️  JSON-LD parse error: ${e.message}`);
+            }
+          }
         });
         
         // STRATEGY 2: Meta tags (Priority 2)
