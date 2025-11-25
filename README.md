@@ -127,16 +127,20 @@ npm run dev
 
 ## 🧠 How It Works
 
-### 🔍 **Intelligent Website Detection** (DuckDuckGo Only - No Guessing!)
-1. **Multi-query DuckDuckGo search** - Up to 4 targeted queries per outlet
-2. **Aggressive Indian outlet prioritization**:
+### 🔍 **Intelligent Website Detection** (Multi-Method)
+1. **DuckDuckGo Lite** - Simple HTML search (no JavaScript blocking)
+2. **Direct URL patterns** - Tests common variations:
+   - Full name: `dainikjagran.in`, `dainikjagran.com`
+   - Last word: `jagran.com` (handles "Dainik Jagran" → `jagran.com`)
+   - First word: `dainik.com` (if distinctive)
+   - TLD variations: `.in`, `.co.in`, `.com`
+3. **Google search** - Fallback if DDG fails
+4. **Aggressive Indian outlet prioritization**:
    - `.in` / `.co.in` domains: +100,000 priority
    - "India" in domain: +200,000 bonus
-   - Indian keywords in domain: +50,000 each
-   - Foreign TLDs (`.uk`, `.us`, etc.): -1,000,000 (disqualified)
-   - Known foreign outlets: -500,000 penalty
-3. **No fallback guessing** - Only returns verified search results
-4. **Top 3 candidates shown** with priority scores for transparency
+   - Indian keywords: +50,000 each
+   - Foreign TLDs: -1,000,000 (disqualified)
+5. **Verification** - Tests if URL is accessible before selection
 
 ### 📰 **Article Collection** (500+ articles)
 - RSS/Atom feed discovery
@@ -199,11 +203,42 @@ curl http://localhost:5002/api/authors/job-status/<jobId>
 curl 'http://localhost:5002/api/authors/profiles?outlet=the%20hindu&limit=100'
 ```
 
-### Direct Scraper Test (with verbose logs)
+### Direct Scraper Test (Recommended for Development)
 
 ```bash
 cd Backend
+
+# Test with any Indian news outlet
 node test-scraper.js "The Hindu" 10
+node test-scraper.js "India Today" 15
+node test-scraper.js "Deccan Chronicle" 20
+
+# Output includes:
+# - Website detection (DuckDuckGo search with top 5 candidates)
+# - Article collection progress
+# - Author extraction with validation details
+# - Final statistics with topic distribution
+# - Sample authors with full profiles
+```
+
+**Example Output:**
+
+```
+🔍 STAGE 0: Detecting website for "The Hindu"
+   🏆 Top 5 candidates (by priority):
+      1. 🇮🇳 thehindu.com (Score: 250,000)
+      2. 🌍 hindu.com (Score: 5,000)
+   
+   ✅ SELECTED: https://www.thehindu.com
+      Domain: thehindu.com 🇮🇳 (Indian)
+      ✅ Confirmed: This is a news website
+
+📰 STAGE 1: Collecting articles from: https://www.thehindu.com
+   ✓ Found 482 articles from RSS
+
+👥 STAGE 2: Discovering Journalist Profiles
+   ✓ Found 12 authors from directory pages
+   📊 Progress: 300/300 articles → 24 unique authors found
 ```
 
 ### Common Issues & Solutions

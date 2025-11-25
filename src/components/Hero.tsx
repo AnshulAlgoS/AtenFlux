@@ -71,6 +71,7 @@ export const Hero: React.FC<HeroProps> = ({ onExplore }) => {
               <Button
                 variant="outline"
                 className="border-primary/50 text-foreground hover:bg-muted"
+                onClick={() => window.open('https://www.youtube.com/watch?v=5H4JhgzVv2I', '_blank')}
               >
                 Watch Demo
               </Button>

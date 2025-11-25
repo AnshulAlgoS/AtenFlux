@@ -173,63 +173,209 @@ function isValidJournalistName(name, debug = false) {
 
 async function detectOutletWebsite(outletName) {
   console.log(`\n🔍 STAGE 0: Detecting website for "${outletName}"`);
-  console.log(`   Strategy: DuckDuckGo search ONLY (no guessing, no fallbacks)`);
+  console.log(`   Strategy: Multi-source search (DuckDuckGo API + Lite + Google)`);
   console.log(`   Priority: Indian domains (.in, .co.in) >>> Foreign domains`);
-  
-  // Use ONLY DuckDuckGo HTML search - try multiple queries for better results
-  const queries = [
-    `${outletName} news india official website`,  // Most specific
-    `${outletName} newspaper india`,
-    `${outletName} .in news outlet`,
-    `${outletName} news website`,
-  ];
-  
-  console.log(`\n   🔍 Searching DuckDuckGo with ${queries.length} queries...`);
   
   const allCandidates = [];
   
-  for (const query of queries) {
+  // Method 1: DuckDuckGo Lite (most reliable, no JavaScript)
+  console.log(`\n   [Method 1/3] DuckDuckGo Lite Search...`);
+  try {
+    const query = `${outletName} official website`;
+    const searchUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+    
+    console.log(`      Query: "${query}"`);
+    
+    const response = await axios.get(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html',
+      },
+      timeout: 10000
+    });
+    
+    const $ = cheerio.load(response.data);
+    
+    // DuckDuckGo Lite uses simple table structure
+    $('a.result-link').each((i, el) => {
+      const href = $(el).attr('href');
+      const title = $(el).text().trim();
+      
+      if (href && href.startsWith('http')) {
+        if (!allCandidates.some(c => c.url === href)) {
+          allCandidates.push({ 
+            url: href, 
+            title, 
+            snippet: '', 
+            query, 
+            source: 'duckduckgo-lite' 
+          });
+        }
+      }
+    });
+    
+    // Also try table rows with links
+    $('tr').each((i, row) => {
+      const $row = $(row);
+      const link = $row.find('a[href^="http"]').first();
+      
+      if (link.length) {
+        const href = link.attr('href');
+        const text = $row.text().trim();
+        
+        if (href && !allCandidates.some(c => c.url === href)) {
+          allCandidates.push({ 
+            url: href, 
+            title: text.substring(0, 100), 
+            snippet: text, 
+            query, 
+            source: 'duckduckgo-lite' 
+          });
+        }
+      }
+    });
+    
+    console.log(`      ✓ Found ${allCandidates.length} results from DDG Lite`);
+    
+  } catch (err) {
+    console.log(`      ⚠️  DDG Lite failed: ${err.message}`);
+  }
+  
+  // Method 2: Try direct URL patterns (common for Indian news)
+  if (allCandidates.length < 3) {
+    console.log(`\n   [Method 2/3] Testing direct URL patterns...`);
+    
+    const normalized = outletName
+      .toLowerCase()
+      .replace(/^the\s+/i, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, '');
+    
+    // Get individual words for shortened versions
+    const words = outletName.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    
+    const patterns = [
+      // Full name patterns
+      `https://www.${normalized}.in`,
+      `https://www.${normalized}.co.in`,
+      `https://www.${normalized}.com`,
+      `https://${normalized}.in`,
+      `https://${normalized}.com`,
+    ];
+
+    if (words.length > 1) {
+      const lastWord = words[words.length - 1];
+      patterns.push(
+        `https://www.${lastWord}.com`,
+        `https://www.${lastWord}.in`,
+        `https://${lastWord}.com`,
+        `https://${lastWord}.in`,
+        `https://www.${lastWord}.co.in`
+      );
+    }
+    
+    // Also try first word if it's distinctive
+    if (words.length > 1 && words[0].length > 4) {
+      const firstWord = words[0];
+      patterns.push(
+        `https://www.${firstWord}.com`,
+        `https://www.${firstWord}.in`
+      );
+    }
+    
+    console.log(`      Testing ${patterns.length} URL patterns...`);
+    
+    for (const url of patterns) {
+      try {
+        const response = await axios.head(url, {
+          timeout: 5000,
+          headers: { 'User-Agent': getRandomUserAgent() },
+          maxRedirects: 5,
+          validateStatus: (status) => status < 500
+        });
+        
+        if (response.status >= 200 && response.status < 400) {
+          console.log(`      ✓ SUCCESS: ${url}`);
+          
+          if (!allCandidates.some(c => c.url === url)) {
+            allCandidates.push({ 
+              url, 
+              title: outletName, 
+              snippet: 'Direct URL pattern match', 
+              query: 'pattern',
+              source: 'direct-url'
+            });
+          }
+        }
+      } catch (e) {
+        // Silent fail for non-accessible URLs
+      }
+    }
+    
+    console.log(`      ✅ Found ${allCandidates.length} accessible URLs`);
+  }
+  
+  // Method 3: Google search as last resort
+  if (allCandidates.length < 3) {
+    console.log(`\n   [Method 3/3] Google search fallback...`);
+    
     try {
-      console.log(`      Query: "${query}"`);
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      const query = `${outletName} official website`;
+      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&gl=in`;
       
       const response = await axios.get(searchUrl, {
         headers: {
-          'User-Agent': getRandomUserAgent(),
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'text/html',
-          'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8,ta;q=0.7,ml;q=0.6',
+          'Accept-Language': 'en-IN,en;q=0.9',
         },
-        timeout: 15000
+        timeout: 10000
       });
       
       const $ = cheerio.load(response.data);
       
-      // Extract top 10 results per query
-      $('.result__a').slice(0, 10).each((i, el) => {
+      // Multiple Google selectors
+      $('div.yuRUbf a, h3 a, a[jsname]').each((i, el) => {
         const href = $(el).attr('href');
-        const title = $(el).text().trim();
-        const snippet = $(el).closest('.result').find('.result__snippet').text().trim();
+        const title = $(el).text().trim() || $(el).find('h3').text().trim();
         
-        if (href && href.startsWith('http')) {
-          // Check if already added
+        if (href && href.startsWith('http') && !href.includes('google.com')) {
           if (!allCandidates.some(c => c.url === href)) {
-            allCandidates.push({ url: href, title, snippet, query });
+            allCandidates.push({ 
+              url: href, 
+              title, 
+              snippet: '', 
+              query, 
+              source: 'google' 
+            });
           }
         }
       });
       
-      await delay(500); // Be nice to DuckDuckGo
+      console.log(`      ✓ Total after Google: ${allCandidates.length}`);
       
-    } catch (queryErr) {
-      console.log(`      ⚠️  Query failed: ${queryErr.message}`);
-      continue;
+    } catch (err) {
+      console.log(`      ⚠️  Google failed: ${err.message}`);
     }
   }
   
-  console.log(`\n   📊 Total candidates found: ${allCandidates.length}`);
+  console.log(`\n   📊 Total candidates from all sources: ${allCandidates.length}`);
   
   if (allCandidates.length === 0) {
-    throw new Error(`No search results found for "${outletName}". The outlet name might be misspelled or doesn't exist.`);
+    throw new Error(`❌ FAILED: Could not find website for "${outletName}".\n\n` +
+                   `   All methods failed:\n` +
+                   `   1. ❌ DuckDuckGo Lite: No results\n` +
+                   `   2. ❌ Direct URL patterns: None accessible\n` +
+                   `   3. ❌ Google search: No results\n\n` +
+                   `   💡 This usually means:\n` +
+                   `   - Network/firewall blocking search requests\n` +
+                   `   - Outlet name spelling is incorrect\n` +
+                   `   - Outlet doesn't have website\n\n` +
+                   `   🔧 Solutions:\n` +
+                   `   1. Check spelling: "${outletName}"\n` +
+                   `   2. Try: "${outletName.replace(/\s+/g, '')}"\n` +
+                   `   3. Manual search: https://www.google.com/search?q=${encodeURIComponent(outletName)}\n` +
+                   `   4. Check server firewall settings`);
   }
   
   // Validate and score each candidate
@@ -354,26 +500,86 @@ async function detectOutletWebsite(outletName) {
   console.log(`\n   ✅ Valid candidates: ${validCandidates.length}`);
   
   if (validCandidates.length === 0) {
-    throw new Error(`No valid websites found for "${outletName}". Please check:\n` +
-                   `   1. Outlet name spelling\n` +
-                   `   2. Outlet actually has a website\n` +
-                   `   3. Website is accessible from your location`);
+    throw new Error(`❌ FAILED: No valid websites found for "${outletName}".\n\n` +
+                   `   Possible reasons:\n` +
+                   `   1. ❌ Outlet name misspelled\n` +
+                   `   2. ❌ Outlet doesn't have a website\n` +
+                   `   3. ❌ Website is not accessible\n` +
+                   `   4. ❌ DuckDuckGo search returned no results\n\n` +
+                   `   💡 Try:\n` +
+                   `   - Check spelling: "${outletName}"\n` +
+                   `   - Use full name (e.g., "The Hindu" not just "Hindu")\n` +
+                   `   - Search manually: https://duckduckgo.com/?q=${encodeURIComponent(outletName + ' news india')}`);
   }
   
   // Sort by priority (highest first)
   validCandidates.sort((a, b) => b.priority - a.priority);
   
-  // Show top 3 candidates
-  console.log(`\n   🏆 Top candidates (by priority):`);
-  validCandidates.slice(0, 3).forEach((c, i) => {
-    console.log(`      ${i + 1}. ${c.hostname} (Priority: ${c.priority})`);
-    console.log(`         ${c.url}`);
+  // Show top 5 candidates with detailed info
+  console.log(`\n   🏆 Top ${Math.min(5, validCandidates.length)} candidates (by priority):`);
+  validCandidates.slice(0, 5).forEach((c, i) => {
+    const isIndian = c.hostname.endsWith('.in') || c.hostname.endsWith('.co.in');
+    const flag = isIndian ? '🇮🇳' : '🌍';
+    console.log(`      ${i + 1}. ${flag} ${c.hostname} (Score: ${c.priority.toLocaleString()})`);
+    console.log(`         URL: ${c.url}`);
+    console.log(`         Title: ${c.title.substring(0, 70)}...`);
   });
   
   const winner = validCandidates[0];
+  const isIndianWinner = winner.hostname.endsWith('.in') || winner.hostname.endsWith('.co.in');
+  
   console.log(`\n   ✅ SELECTED: ${winner.url}`);
-  console.log(`      Priority: ${winner.priority}`);
-  console.log(`      Title: ${winner.title.substring(0, 60)}...`);
+  console.log(`      Domain: ${winner.hostname} ${isIndianWinner ? '🇮🇳 (Indian)' : '🌍 (International)'}`);
+  console.log(`      Priority Score: ${winner.priority.toLocaleString()}`);
+  console.log(`      Source: ${winner.source || 'duckduckgo'}`);
+  console.log(`      Found via query: "${winner.query}"`);
+  
+  // Verify it's actually a news website by checking the homepage
+  console.log(`\n   🔍 Verifying it's a news website...`);
+  try {
+    const verifyResponse = await axios.get(winner.url, {
+      headers: { 
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html',
+      },
+      timeout: 10000,
+      maxRedirects: 5
+    });
+    
+    const $ = cheerio.load(verifyResponse.data);
+    const title = $('title').text().toLowerCase();
+    const metaDescription = $('meta[name="description"]').attr('content')?.toLowerCase() || '';
+    const bodyText = $('body').text().toLowerCase().substring(0, 5000);
+    
+    // Check for news-related keywords
+    const newsKeywords = ['news', 'article', 'story', 'journalism', 'reporter', 
+                         'latest', 'breaking', 'opinion', 'editorial', 'column'];
+    const keywordMatches = newsKeywords.filter(kw => 
+      title.includes(kw) || metaDescription.includes(kw) || bodyText.includes(kw)
+    ).length;
+    
+    console.log(`      ✓ News keyword matches: ${keywordMatches}/${newsKeywords.length}`);
+    
+    // Check for article links
+    const articleLinks = $('a[href]').filter((i, el) => {
+      const href = $(el).attr('href') || '';
+      return href.includes('/article') || href.includes('/story') || 
+             href.includes('/news') || /\/\d{4}\/\d{2}\/\d{2}/.test(href);
+    }).length;
+    
+    console.log(`      ✓ Article links found: ${articleLinks}`);
+    
+    if (keywordMatches < 2 && articleLinks < 5) {
+      console.log(`      ⚠️  WARNING: This might not be a news website!`);
+      console.log(`          Consider trying a different search query.`);
+    } else {
+      console.log(`      ✅ Confirmed: This is a news website`);
+    }
+    
+  } catch (verifyErr) {
+    console.log(`      ⚠️  Could not verify: ${verifyErr.message}`);
+    console.log(`          Proceeding anyway...`);
+  }
   
   return winner.url;
 }
@@ -1821,9 +2027,10 @@ export async function scrapeLightweight(outletName, maxAuthors = 35, progressCal
     console.log(`   ✓ Found ${authors.length} authors from directory pages`);
     
     // Step 4: Extract authors from articles to fill the gap
+    let articleAuthors = []; // Initialize outside the if block
     if (authors.length < maxAuthors) {
       console.log(`\n   Strategy 2: Extracting from ${articles.length} articles...`);
-      const articleAuthors = await extractAuthorsFromArticles(articles, website, maxAuthors - authors.length);
+      articleAuthors = await extractAuthorsFromArticles(articles, website, maxAuthors - authors.length);
       console.log(`   ✓ Found ${articleAuthors.length} additional authors from articles`);
       
       // Merge without duplicates
@@ -1854,9 +2061,12 @@ export async function scrapeLightweight(outletName, maxAuthors = 35, progressCal
       authors = authors.slice(0, maxAuthors);
     }
     
+    const fromDirectory = authors.length - articleAuthors.length;
+    const fromArticles = articleAuthors.length;
+    
     console.log(`\n✅ TOTAL: ${authors.length} unique journalists discovered`);
-    console.log(`   From directory: ${authors.length - (articleAuthors?.length || 0)}`);
-    console.log(`   From articles: ${articleAuthors?.length || 0}\n`);
+    console.log(`   From directory: ${fromDirectory}`);
+    console.log(`   From articles: ${fromArticles}\n`);
     
     // Step 4: Extract full profiles for each author
     console.log(`${'='.repeat(80)}`);
