@@ -172,343 +172,210 @@ function isValidJournalistName(name, debug = false) {
 // ============================================================
 
 async function detectOutletWebsite(outletName) {
-  console.log(`\n🔍 STAGE 0: Detecting website for "${outletName}" (NO HARDCODED URLs)`);
-  console.log(`   Strategy: Multi-source web search → Pattern matching → Verification`);
+  console.log(`\n🔍 STAGE 0: Detecting website for "${outletName}"`);
+  console.log(`   Strategy: DuckDuckGo search ONLY (no guessing, no fallbacks)`);
+  console.log(`   Priority: Indian domains (.in, .co.in) >>> Foreign domains`);
   
-  // Strategy 1: DuckDuckGo HTML search (primary - no API key needed)
-  console.log(`\n   [1/4] Searching DuckDuckGo...`);
-  try {
-    const queries = [
-      `${outletName} newspaper india`,  // PRIORITIZE INDIAN SEARCH FIRST
-      `${outletName} news india official website`,
-      `${outletName} .in news outlet`,
-      `${outletName} official website news`,
-    ];
-    
-    for (const query of queries) {
-      try {
-        const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-        
-        const response = await axios.get(searchUrl, {
-          headers: {
-            'User-Agent': getRandomUserAgent(),
-            'Accept': 'text/html',
-            'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8,ta;q=0.7,ml;q=0.6',
-          },
-          timeout: 15000
-        });
-        
-        const $ = cheerio.load(response.data);
-        
-        // Extract top 5 results
-        const candidates = [];
-        $('.result__a').slice(0, 5).each((i, el) => {
-          const href = $(el).attr('href');
-          const title = $(el).text().trim();
-          if (href && href.startsWith('http')) {
-            candidates.push({ url: href, title });
-          }
-        });
-        
-        console.log(`      Found ${candidates.length} candidates from DuckDuckGo`);
-        
-        // Validate each candidate - PRIORITIZE INDIAN NEWS OUTLETS
-        const validCandidates = [];
-        
-        for (const candidate of candidates) {
-          try {
-            const url = new URL(candidate.url);
-            const hostname = url.hostname.toLowerCase();
-            
-            // Skip irrelevant domains
-            if (hostname.includes('wikipedia') || hostname.includes('facebook') || 
-                hostname.includes('twitter') || hostname.includes('youtube') ||
-                hostname.includes('linkedin') || hostname.includes('instagram')) {
-              continue;
-            }
-            
-            // Check if outlet name appears in domain or title
-            const outletWords = outletName.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/);
-            const domainMatch = outletWords.some(word => word.length > 3 && hostname.includes(word));
-            const titleMatch = outletWords.some(word => word.length > 3 && candidate.title.toLowerCase().includes(word));
-            
-            if (domainMatch || titleMatch) {
-              // Verify it's a real website
-              try {
-                await axios.head(candidate.url, { 
-                  timeout: 5000,
-                  headers: { 'User-Agent': getRandomUserAgent() }
-                });
-                
-                // Calculate priority score (higher = better)
-                // AGGRESSIVE INDIAN OUTLET PRIORITIZATION
-                let priority = 0;
-                
-                // ULTRA MEGA PRIORITY: Pure Indian domains (.in, .co.in) - MASSIVE BOOST!
-                if (hostname.endsWith('.in') || hostname.endsWith('.co.in')) {
-                  priority += 100000;  // ULTRA MASSIVE boost for .in domains (10x increase!)
-                  console.log(`          🇮🇳🇮🇳🇮🇳 INDIAN DOMAIN (.in/.co.in): +100000 priority`);
-                }
-                
-                // VERY HIGH PRIORITY: Indian keywords in URL/domain/title
-                const indianKeywords = ['india', 'indian', 'hindi', 'tamil', 'malayalam', 'bengali', 
-                                       'telugu', 'kannada', 'gujarati', 'marathi', 'punjabi',
-                                       'delhi', 'mumbai', 'bangalore', 'chennai', 'kolkata',
-                                       'bharat', 'desi', 'bharatiya', 'indiatimes', 'hindustan',
-                                       'pune', 'hyderabad', 'ahmedabad', 'jaipur', 'lucknow',
-                                       'patna', 'bhopal', 'chandigarh', 'kerala', 'karnataka',
-                                       'maharashtra', 'rajasthan', 'punjab', 'gujarat', 'bihar',
-                                       'tamilnadu', 'telangana', 'odisha', 'assam', 'uttarpradesh'];
-                
-                const urlLower = candidate.url.toLowerCase();
-                const titleLower = candidate.title.toLowerCase();
-                const hostnameCheck = hostname.toLowerCase();
-                
-                // Count Indian keyword matches in domain (HIGHEST WEIGHT - 50x increase!)
-                const domainIndianMatches = indianKeywords.filter(kw => hostnameCheck.includes(kw)).length;
-                if (domainIndianMatches > 0) {
-                  priority += 50000 * domainIndianMatches;  // 50000 points per Indian keyword in domain!
-                  console.log(`          🇮🇳 Indian keywords in DOMAIN (${domainIndianMatches}): +${50000 * domainIndianMatches}`);
-                }
-                
-                // Count Indian keyword matches in URL path/title (10x increase)
-                const pathIndianMatches = indianKeywords.filter(kw => 
-                  (urlLower.includes(kw) || titleLower.includes(kw)) && !hostnameCheck.includes(kw)
-                ).length;
-                if (pathIndianMatches > 0) {
-                  priority += 10000 * pathIndianMatches;  // 10000 points per Indian keyword elsewhere
-                  console.log(`          🇮🇳 Indian keywords in path/title (${pathIndianMatches}): +${10000 * pathIndianMatches}`);
-                }
-                
-                // NUCLEAR PENALTY: Definite foreign TLDs (COMPLETE DISQUALIFICATION)
-                const foreignTLDs = ['.uk', '.us', '.au', '.ca', '.nz', '.eu', '.de', '.fr', '.jp', '.cn', '.co.uk', 
-                                    '.co.nz', '.com.au', '.co.za', '.br', '.mx', '.it', '.es', '.ru', '.kr'];
-                if (foreignTLDs.some(tld => hostname.endsWith(tld))) {
-                  priority -= 1000000;  // NUCLEAR penalty - TOTAL disqualification!
-                  console.log(`          ❌❌❌ FOREIGN TLD DETECTED: -1000000 priority (DISQUALIFIED)`);
-                }
-                
-                // EXTREME PENALTY: Known foreign news outlets (even .com versions)
-                const foreignDomains = [
-                  'tribune.com', 'nytimes', 'washingtonpost', 'theguardian', 'bbc.co', 'bbc.com',
-                  'cnn.com', 'reuters.com', 'apnews', 'bloomberg.com', 'wsj.com', 'forbes.com',
-                  'time.com', 'newsweek', 'theatlantic', 'newyorker', 'vanityfair',
-                  'thesun.co', 'dailymail.co', 'telegraph.co', 'independent.co',
-                  'aljazeera.com', 'france24', 'dw.com', 'rt.com', 'sputnik',
-                  'abc.net.au', 'smh.com.au', 'theage.com.au', 'nzherald.co',
-                  'straitstimes.com', 'scmp.com', 'japantimes', 'koreaherald'
-                ];
-                
-                const isForeignOutlet = foreignDomains.some(domain => {
-                  // Special case for tribune.com vs tribuneindia.com
-                  if (domain === 'tribune.com') {
-                    // Only penalize if exact match OR if doesn't contain 'india'
-                    return hostname === 'tribune.com' || (hostname.includes('tribune') && !hostname.includes('india'));
-                  }
-                  // For others, check if domain is in hostname AND doesn't contain 'india'
-                  return hostname.includes(domain.replace(/\.(com|co\.uk|net|org)$/, '')) && !hostname.includes('india');
-                });
-                
-                if (isForeignOutlet) {
-                  priority -= 500000;  // EXTREME penalty - near-total disqualification
-                  console.log(`          ❌❌ KNOWN FOREIGN OUTLET: -500000 priority (HEAVILY PENALIZED)`);
-                }
-                
-                // MASSIVE PENALTY: Foreign location keywords
-                const foreignKeywords = [
-                  'american', 'british', 'australia', 'australian', 'canada', 'canadian', 'uk', 
-                  'usa', 'united states', 'united kingdom', 'washington', 'london', 
-                  'new york', 'chicago', 'california', 'texas', 'florida',
-                  'toronto', 'vancouver', 'sydney', 'melbourne', 'auckland',
-                  'singapore', 'hong kong', 'beijing', 'shanghai', 'tokyo',
-                  'european', 'africa', 'african', 'latin america', 'south america'
-                ];
-                const foreignMatches = foreignKeywords.filter(kw => 
-                  urlLower.includes(kw) || titleLower.includes(kw)
-                ).length;
-                
-                if (foreignMatches > 0) {
-                  priority -= 20000 * foreignMatches;  // 20000 points penalty per foreign keyword (10x increase)
-                  console.log(`          ❌ Foreign location keywords (${foreignMatches}): -${20000 * foreignMatches}`);
-                }
-                
-                // HEAVY PENALTY: Plain .com/.net/.org domains without ANY Indian indicators
-                if ((hostname.endsWith('.com') || hostname.endsWith('.net') || hostname.endsWith('.org')) && 
-                    domainIndianMatches === 0 && pathIndianMatches === 0) {
-                  priority -= 75000;  // VERY heavy penalty for generic TLD without India (15x increase)
-                  console.log(`          ⚠️⚠️ Generic TLD (.com/.net/.org) with NO Indian indicators: -75000`);
-                }
-                
-                // BONUS: Explicit "India" or "Indian" in domain name gets extra boost
-                if (hostnameCheck.includes('india') || hostnameCheck.includes('bharat')) {
-                  priority += 200000;  // MEGA bonus for explicit India reference in domain
-                  console.log(`          🇮🇳✨ "India/Bharat" EXPLICITLY in domain: +200000 priority`);
-                }
-                
-                validCandidates.push({ ...candidate, priority });
-                console.log(`      Found: ${candidate.url} (Priority: ${priority})`);
-                
-              } catch (e) {
-                continue;
-              }
-            }
-          } catch (e) {
-            continue;
-          }
-        }
-        
-        // Sort by priority (highest first) and return the best match
-        if (validCandidates.length > 0) {
-          validCandidates.sort((a, b) => b.priority - a.priority);
-          console.log(`      ✅ Selected (highest priority): ${validCandidates[0].url}`);
-          return validCandidates[0].url;
-        }
-      } catch (queryErr) {
-        continue;
-      }
-    }
-  } catch (err) {
-    console.log(`      ⚠️  DuckDuckGo search failed: ${err.message}`);
-  }
-  
-  // Strategy 2: Intelligent domain pattern construction + verification
-  console.log(`\n   [2/4] Trying intelligent domain patterns...`);
-  const normalized = outletName
-    .toLowerCase()
-    .replace(/^the\s+/i, '')  // Remove "The" prefix
-    .replace(/[^a-z0-9\s]/g, '')  // Remove special chars
-    .replace(/\s+/g, '');  // Remove spaces
-  
-  // Generate multiple pattern variations - INDIAN DOMAINS FIRST!
-  const patterns = [
-    // Try Indian domains first (.in, .co.in)
-    `https://www.${normalized}.in`,
-    `https://${normalized}.in`,
-    `https://www.${normalized}.co.in`,
-    `https://www.${normalized}online.in`,
-    // Then try .com domains
-    `https://www.${normalized}.com`,
-    `https://${normalized}.com`,
-    `https://www.${normalized}online.com`,
-    // Finally try other TLDs
-    `https://www.${normalized}.net`,
-    `https://www.${normalized}.org`,
+  // Use ONLY DuckDuckGo HTML search - try multiple queries for better results
+  const queries = [
+    `${outletName} news india official website`,  // Most specific
+    `${outletName} newspaper india`,
+    `${outletName} .in news outlet`,
+    `${outletName} news website`,
   ];
   
-  console.log(`      Testing ${patterns.length} domain patterns...`);
+  console.log(`\n   🔍 Searching DuckDuckGo with ${queries.length} queries...`);
   
-  for (const url of patterns) {
+  const allCandidates = [];
+  
+  for (const query of queries) {
     try {
-      const response = await axios.head(url, { 
-        timeout: 5000,
-        headers: { 
+      console.log(`      Query: "${query}"`);
+      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      
+      const response = await axios.get(searchUrl, {
+        headers: {
           'User-Agent': getRandomUserAgent(),
-          'Accept': 'text/html'
+          'Accept': 'text/html',
+          'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8,ta;q=0.7,ml;q=0.6',
         },
-        maxRedirects: 5
+        timeout: 15000
       });
       
-      if (response.status === 200) {
-        // Additional verification: Check if it's actually a news website
-        try {
-          const pageResponse = await axios.get(url, {
-            timeout: 8000,
-            headers: { 'User-Agent': getRandomUserAgent() }
-          });
-          
-          const $ = cheerio.load(pageResponse.data);
-          const pageText = $('body').text().toLowerCase();
-          const title = $('title').text().toLowerCase();
-          
-          // Check for news-related keywords
-          const newsKeywords = ['news', 'article', 'story', 'journalism', 'reporter', 'latest'];
-          const hasNewsKeywords = newsKeywords.some(keyword => 
-            pageText.includes(keyword) || title.includes(keyword)
-          );
-          
-          if (hasNewsKeywords) {
-            console.log(`      ✅ Verified news site: ${url}`);
-            return url;
+      const $ = cheerio.load(response.data);
+      
+      // Extract top 10 results per query
+      $('.result__a').slice(0, 10).each((i, el) => {
+        const href = $(el).attr('href');
+        const title = $(el).text().trim();
+        const snippet = $(el).closest('.result').find('.result__snippet').text().trim();
+        
+        if (href && href.startsWith('http')) {
+          // Check if already added
+          if (!allCandidates.some(c => c.url === href)) {
+            allCandidates.push({ url: href, title, snippet, query });
           }
-        } catch (e) {
-          // If verification fails, still return the URL as it responded
-          console.log(`      ✅ Found (basic): ${url}`);
-          return url;
         }
-      }
-    } catch (e) {
+      });
+      
+      await delay(500); // Be nice to DuckDuckGo
+      
+    } catch (queryErr) {
+      console.log(`      ⚠️  Query failed: ${queryErr.message}`);
       continue;
     }
   }
   
-  // Strategy 3: Alternative search engines (Bing HTML)
-  console.log(`\n   [3/4] Trying Bing search...`);
-  try {
-    const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(outletName + ' official website news')}`;
-    
-    const response = await axios.get(searchUrl, {
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html',
-      },
-      timeout: 15000
-    });
-    
-    const $ = cheerio.load(response.data);
-    
-    // Extract Bing results
-    $('li.b_algo a, .b_title a').slice(0, 3).each((i, el) => {
-      const href = $(el).attr('href');
-      if (href && href.startsWith('http') && 
-          !href.includes('bing.com') && !href.includes('microsoft.com')) {
-        console.log(`      ✅ Found via Bing: ${href}`);
-        return href;
-      }
-    });
-  } catch (err) {
-    console.log(`      ⚠️  Bing search failed: ${err.message}`);
+  console.log(`\n   📊 Total candidates found: ${allCandidates.length}`);
+  
+  if (allCandidates.length === 0) {
+    throw new Error(`No search results found for "${outletName}". The outlet name might be misspelled or doesn't exist.`);
   }
   
-  // Strategy 4: Google Custom Search (last resort, limited queries)
-  console.log(`\n   [4/4] Trying Google search...`);
-  try {
-    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(outletName + ' official website news india')}`;
-    
-    const response = await axios.get(searchUrl, {
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html',
-      },
-      timeout: 15000
-    });
-    
-    const $ = cheerio.load(response.data);
-    
-    // Extract Google results (various selectors as Google changes DOM)
-    const selectors = [
-      'div.yuRUbf > a',
-      'div.yuRUbf > div > a',
-      'a[href^="http"]'
-    ];
-    
-    for (const selector of selectors) {
-      const href = $(selector).first().attr('href');
-      if (href && href.startsWith('http') && 
-          !href.includes('google.com') && !href.includes('youtube.com')) {
-        console.log(`      ✅ Found via Google: ${href}`);
-        return href;
+  // Validate and score each candidate
+  const validCandidates = [];
+  
+  for (const candidate of allCandidates) {
+    try {
+      const url = new URL(candidate.url);
+      const hostname = url.hostname.toLowerCase();
+      
+      // Skip irrelevant domains (social media, wikis, etc.)
+      const SKIP_DOMAINS = ['wikipedia', 'facebook', 'twitter', 'youtube', 'linkedin', 
+                           'instagram', 'reddit', 'quora', 'pinterest', 'tiktok'];
+      if (SKIP_DOMAINS.some(skip => hostname.includes(skip))) {
+        continue;
       }
+      
+      // Check if outlet name appears in domain or title
+      const outletWords = outletName.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(w => w.length > 2);
+      const domainMatch = outletWords.some(word => hostname.includes(word));
+      const titleMatch = outletWords.some(word => candidate.title.toLowerCase().includes(word));
+      const snippetMatch = outletWords.some(word => candidate.snippet.toLowerCase().includes(word));
+      
+      if (domainMatch || titleMatch || snippetMatch) {
+        // Verify it's accessible
+        try {
+          const headResponse = await axios.head(candidate.url, { 
+            timeout: 8000,
+            headers: { 'User-Agent': getRandomUserAgent() },
+            maxRedirects: 5
+          });
+          
+          if (headResponse.status >= 200 && headResponse.status < 400) {
+            // Calculate priority score (higher = better)
+            // ULTRA AGGRESSIVE INDIAN OUTLET PRIORITIZATION
+            let priority = 0;
+            
+            // ULTRA AGGRESSIVE INDIAN OUTLET PRIORITIZATION
+            // MEGA PRIORITY: Pure Indian domains (.in, .co.in)
+            if (hostname.endsWith('.in') || hostname.endsWith('.co.in')) {
+              priority += 100000;  // MASSIVE boost for .in domains
+            }
+            
+            // HIGH PRIORITY: Indian keywords in domain/URL/title/snippet
+            const indianKeywords = ['india', 'indian', 'hindi', 'tamil', 'malayalam', 'bengali', 
+                                   'telugu', 'kannada', 'gujarati', 'marathi', 'punjabi',
+                                   'delhi', 'mumbai', 'bangalore', 'chennai', 'kolkata',
+                                   'bharat', 'desi', 'bharatiya', 'indiatimes', 'hindustan',
+                                   'pune', 'hyderabad', 'ahmedabad', 'jaipur', 'lucknow',
+                                   'patna', 'bhopal', 'chandigarh', 'kerala', 'karnataka',
+                                   'maharashtra', 'rajasthan', 'punjab', 'gujarat', 'bihar',
+                                   'tamilnadu', 'telangana', 'odisha', 'assam', 'uttarpradesh'];
+            
+            const urlLower = candidate.url.toLowerCase();
+            const titleLower = candidate.title.toLowerCase();
+            const snippetLower = candidate.snippet.toLowerCase();
+            
+            // Domain contains Indian keywords (HIGHEST weight)
+            const domainIndianMatches = indianKeywords.filter(kw => hostname.includes(kw)).length;
+            if (domainIndianMatches > 0) {
+              priority += 50000 * domainIndianMatches;
+            }
+            
+            // Title/snippet contains Indian keywords
+            const contentIndianMatches = indianKeywords.filter(kw => 
+              titleLower.includes(kw) || snippetLower.includes(kw)
+            ).length;
+            if (contentIndianMatches > 0) {
+              priority += 10000 * contentIndianMatches;
+            }
+            
+            // DISQUALIFICATION: Foreign TLDs
+            const foreignTLDs = ['.uk', '.us', '.au', '.ca', '.nz', '.eu', '.de', '.fr', '.jp', 
+                                '.cn', '.co.uk', '.co.nz', '.com.au', '.co.za'];
+            if (foreignTLDs.some(tld => hostname.endsWith(tld))) {
+              priority -= 1000000;  // NUCLEAR penalty
+            }
+            
+            // HEAVY PENALTY: Known foreign outlets
+            const foreignDomains = ['tribune.com', 'nytimes', 'washingtonpost', 'theguardian', 
+                                   'bbc.', 'cnn.', 'reuters.', 'bloomberg', 'wsj', 'forbes'];
+            if (foreignDomains.some(d => hostname.includes(d) && !hostname.includes('india'))) {
+              priority -= 500000;
+            }
+            
+            // PENALTY: Foreign location keywords
+            const foreignKeywords = ['american', 'british', 'australia', 'canada', 'uk', 'usa',
+                                    'london', 'washington', 'new york', 'toronto', 'sydney'];
+            const foreignMatches = foreignKeywords.filter(kw => 
+              urlLower.includes(kw) || titleLower.includes(kw) || snippetLower.includes(kw)
+            ).length;
+            if (foreignMatches > 0) {
+              priority -= 20000 * foreignMatches;
+            }
+            
+            // BONUS: "India" explicitly in domain
+            if (hostname.includes('india') || hostname.includes('bharat')) {
+              priority += 200000;
+            }
+            
+            // Bonus for domain match
+            if (domainMatch) priority += 5000;
+            if (titleMatch) priority += 2000;
+            if (snippetMatch) priority += 1000;
+            
+            validCandidates.push({ 
+              ...candidate, 
+              hostname,
+              priority 
+            });
+          }
+        } catch (verifyErr) {
+          // URL not accessible
+          continue;
+        }
+      }
+    } catch (urlErr) {
+      continue;
     }
-  } catch (err) {
-    console.log(`      ⚠️  Google search failed: ${err.message}`);
   }
   
-  // Final fallback: Return best guess with warning
-  const fallbackUrl = `https://www.${normalized}.com`;
-  console.log(`\n   ⚠️  Could not auto-detect website. Using intelligent guess: ${fallbackUrl}`);
-  console.log(`   Note: This URL will be tested during article collection phase`);
+  console.log(`\n   ✅ Valid candidates: ${validCandidates.length}`);
   
-  return fallbackUrl;
+  if (validCandidates.length === 0) {
+    throw new Error(`No valid websites found for "${outletName}". Please check:\n` +
+                   `   1. Outlet name spelling\n` +
+                   `   2. Outlet actually has a website\n` +
+                   `   3. Website is accessible from your location`);
+  }
+  
+  // Sort by priority (highest first)
+  validCandidates.sort((a, b) => b.priority - a.priority);
+  
+  // Show top 3 candidates
+  console.log(`\n   🏆 Top candidates (by priority):`);
+  validCandidates.slice(0, 3).forEach((c, i) => {
+    console.log(`      ${i + 1}. ${c.hostname} (Priority: ${c.priority})`);
+    console.log(`         ${c.url}`);
+  });
+  
+  const winner = validCandidates[0];
+  console.log(`\n   ✅ SELECTED: ${winner.url}`);
+  console.log(`      Priority: ${winner.priority}`);
+  console.log(`      Title: ${winner.title.substring(0, 60)}...`);
+  
+  return winner.url;
 }
 
 // ============================================================
@@ -1987,7 +1854,9 @@ export async function scrapeLightweight(outletName, maxAuthors = 35, progressCal
       authors = authors.slice(0, maxAuthors);
     }
     
-    console.log(`\n✅ TOTAL: ${authors.length} unique journalists discovered\n`);
+    console.log(`\n✅ TOTAL: ${authors.length} unique journalists discovered`);
+    console.log(`   From directory: ${authors.length - (articleAuthors?.length || 0)}`);
+    console.log(`   From articles: ${articleAuthors?.length || 0}\n`);
     
     // Step 4: Extract full profiles for each author
     console.log(`${'='.repeat(80)}`);

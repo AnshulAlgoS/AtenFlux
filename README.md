@@ -127,14 +127,16 @@ npm run dev
 
 ## 🧠 How It Works
 
-### 🔍 **Intelligent Website Detection**
-1. **Multi-source search** (DuckDuckGo, Bing, Google) with aggressive Indian outlet prioritization
-2. **Priority scoring system**:
-   - `.in` / `.co.in` domains: +100,000 priority points
-   - Indian keywords in domain: +50,000 per keyword
-   - Foreign TLDs (`.uk`, `.us`, etc.): -1,000,000 penalty
+### 🔍 **Intelligent Website Detection** (DuckDuckGo Only - No Guessing!)
+1. **Multi-query DuckDuckGo search** - Up to 4 targeted queries per outlet
+2. **Aggressive Indian outlet prioritization**:
+   - `.in` / `.co.in` domains: +100,000 priority
+   - "India" in domain: +200,000 bonus
+   - Indian keywords in domain: +50,000 each
+   - Foreign TLDs (`.uk`, `.us`, etc.): -1,000,000 (disqualified)
    - Known foreign outlets: -500,000 penalty
-3. Automatic pattern matching and verification
+3. **No fallback guessing** - Only returns verified search results
+4. **Top 3 candidates shown** with priority scores for transparency
 
 ### 📰 **Article Collection** (500+ articles)
 - RSS/Atom feed discovery
