@@ -13,23 +13,70 @@
 
 <div style="background-color:#1f1f2e; padding: 15px; border-radius: 8px;">
 
-**Interactive Network Graph**  
-- Nodes = journalists, size = influence, color = topic  
+### 🎯 **Dashboard Features**
 
-**Real-Time Updates**  
-- New journalist profiles appear dynamically  
-- Top contributors highlighted with pulsing glow effects  
+**Interactive Network Graph**
 
-**Hover Info Cards**  
-- Name, outlet, sections/beats, article count, profile links  
+- Nodes = journalists, size = influence, color = topic
+- Real-time updates with dynamic profile loading
+- Top contributors highlighted with pulsing glow effects
 
-**Advanced Filters & Panels**  
-- Filter by topic, outlet, or activity  
-- Live activity feed for the most active journalists  
+**Hover Info Cards**
 
-**Modern Dark Theme**  
-- Neon accents for nodes  
+- Name, outlet, publication topics, article count
+- Bio, role, and profile links
+
+**Advanced Filters & Panels**
+
+- Filter by topic, outlet, or activity
+- Live activity feed for the most active journalists
+
+**Modern Dark Theme**
+
+- Neon accents for nodes
 - Smooth animations, responsive design
+
+### 🚀 **Autonomous Scraper Features**
+
+**✅ Zero Configuration Required**
+
+- No hardcoded URLs or outlet mappings
+- Fully autonomous website detection
+- Works for ANY news outlet (Indian or global)
+
+**🌍 Universal Language Support**
+
+- All 10+ Indian languages: Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali, Marathi, Gujarati,
+  Punjabi, Odia
+- Automatic byline detection in all scripts
+- Multi-language keyword extraction
+
+**🇮🇳 Indian Outlet Prioritization**
+
+- Aggressively prefers `.in` and `.co.in` domains
+- Intelligent scoring: Indian domains get 100,000+ priority boost
+- Foreign outlets automatically penalized (even with same name)
+
+**📊 Advanced Topic Detection**
+
+- 16 comprehensive topic categories
+- URL + title + content analysis
+- Identifies author's specific publication beats
+- Topic scoring system for accuracy
+
+**⚡ High-Speed Processing**
+
+- Parallel article processing (5 concurrent requests)
+- Batch author extraction
+- Smart caching and deduplication
+- Typical scrape: 30-50 authors in 2-3 minutes
+
+**🎯 Intelligent Validation**
+
+- Filters out agency bylines (PTI, IANS, Reuters)
+- Removes generic terms in all languages
+- Validates name structure per language
+- Prevents outlet names being used as authors
 
 </div>
 
@@ -80,13 +127,43 @@ npm run dev
 
 ## 🧠 How It Works
 
-1. Detect outlet website automatically.
-2. Collect ~300 articles across sections and paginated lists.
-3. Extract unique authors from collected articles.
-4. Validate names and deduplicate.
-5. Verify each article belongs to the author via byline/JSON‑LD checks.
-6. Enrich topics/keywords and compute influence.
-7. Save/upsert to MongoDB; frontend loads combined saved profiles.
+### 🔍 **Intelligent Website Detection**
+1. **Multi-source search** (DuckDuckGo, Bing, Google) with aggressive Indian outlet prioritization
+2. **Priority scoring system**:
+   - `.in` / `.co.in` domains: +100,000 priority points
+   - Indian keywords in domain: +50,000 per keyword
+   - Foreign TLDs (`.uk`, `.us`, etc.): -1,000,000 penalty
+   - Known foreign outlets: -500,000 penalty
+3. Automatic pattern matching and verification
+
+### 📰 **Article Collection** (500+ articles)
+- RSS/Atom feed discovery
+- Sitemap parsing
+- Homepage and section crawling
+- Search engine fallback
+
+### 👥 **Universal Author Extraction** (ALL Indian Languages)
+- **JSON-LD structured data** (highest reliability)
+- **Meta tags** (article:author, og:author, etc.)
+- **Author links** (25+ selector patterns)
+- **Byline text extraction** with language-specific cleaning:
+  - English, Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali, Marathi, Gujarati, Punjabi, Odia
+- **Parallel processing** (5 concurrent requests for speed)
+
+### 📊 **Comprehensive Topic Detection**
+- **16 topic categories**: Politics, Business, Technology, Sports, Entertainment, Health, Environment, Education, Crime, International, Lifestyle, Social Issues, Science, Real Estate, Automobile, Opinion
+- **Multi-source analysis**:
+  - URL path keywords (3 points per match)
+  - Article title keywords (1 point per match)
+  - NLP analysis of content
+- **Scoring system** to identify author's primary publication topics
+
+### 💾 **Data Processing**
+1. Validate names and deduplicate
+2. Extract bio, role, and social links from profile pages
+3. Enrich with keywords and publication topics
+4. Calculate influence score
+5. Save/upsert to MongoDB
 
 ---
 
