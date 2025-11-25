@@ -104,35 +104,40 @@ export default function AuthorsFetcher() {
 
       const jobId: string = jobStart.jobId;
       addLog(`Job ID: ${jobId}`);
-      addLog("Monitoring job status...");
+      addLog("⏳ Scraping in progress... (this may take 2-5 minutes)");
 
       const statusPath = jobStart.statusEndpoint || `${API_ENDPOINTS.JOB_STATUS}/${jobId}`;
       const statusUrl = `${chosenBaseUrl}${statusPath.startsWith('/') ? statusPath : `/${statusPath}`}`;
       let completedData: any | null = null;
 
       const startTime = Date.now();
-      const MAX_WAIT_MS = 15 * 60 * 1000; // 15 minutes - increased for 200-400 articles
+      const MAX_WAIT_MS = 15 * 60 * 1000; // 15 minutes
 
+      // Poll silently without ANY logging
       while (!completedData && Date.now() - startTime < MAX_WAIT_MS) {
         try {
           const statusRes = await axios.get(statusUrl, { timeout: 10000 });
           const status = statusRes.data;
-          addLog(`📈 Status: ${status.status} | Progress: ${status.progress}% | Found: ${status.authorsFound || 0}`);
 
+          // Check for failure
           if (status.status === 'failed') {
-            setError(` Scraping failed: ${status.error || 'Unknown error'}`);
-            addLog(`Job failed: ${status.error || 'Unknown error'}`);
+            setError(`Scraping failed: ${status.error || 'Unknown error'}`);
+            addLog(`❌ Job failed: ${status.error || 'Unknown error'}`);
             return;
           }
 
+          // Check for completion
           if (status.status === 'completed') {
             completedData = status;
+            break;
           }
+          
+          // NO LOGGING - completely silent polling
         } catch (err: any) {
-          addLog(` Status check failed at ${statusUrl}: ${err.message}`);
+          // Silent retry on network error
         }
 
-        if (completedData) break;
+        // Wait before next check
         await new Promise((r) => setTimeout(r, 2500));
       }
 

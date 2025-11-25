@@ -13,7 +13,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5002;
 const MONGO_URI = process.env.MONGO_URI;
-const SERP_API_KEY = process.env.SERP_API_KEY;
 
 const allowedOrigins = [
   "http://localhost:8080",     // Local development
@@ -81,73 +80,109 @@ const TOPICS = [
   "Environment",
 ];
 
-// ---------------- Stage 0: Find official website of outlet ----------------
+// ---------------- Stage 0: Find official website of outlet using DuckDuckGo ----------------
 async function findOutletWebsite(outletName) {
   try {
-    if (!SERP_API_KEY) {
-      console.warn("SERP_API_KEY not found, using fallback search");
-      // Fallback: try common patterns
-      const commonDomains = [
-        `https://www.${outletName.toLowerCase().replace(/\s+/g, '')}.com`,
-        `https://www.${outletName.toLowerCase().replace(/\s+/g, '')}.in`,
-        `https://${outletName.toLowerCase().replace(/\s+/g, '')}.com`,
-      ];
-      return commonDomains[0];
+    console.log(`🔍 Finding website for: ${outletName} using DuckDuckGo...`);
+    
+    // Try DuckDuckGo HTML API (no key required)
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(outletName + ' official website news india')}`;
+    
+    try {
+      const response = await axios.get(searchUrl, {
+        headers: {
+          'User-Agent': getRandomUserAgent(),
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        timeout: 10000
+      });
+      
+      const cheerio = await import('cheerio');
+      const $ = cheerio.load(response.data);
+      
+      // Extract the first result link
+      const firstResult = $('.result__a').first();
+      if (firstResult.length > 0) {
+        const href = firstResult.attr('href');
+        if (href && href.startsWith('http')) {
+          console.log(`✅ Found via DuckDuckGo: ${href}`);
+          return href;
+        }
+      }
+    } catch (ddgErr) {
+      console.log(`⚠️  DuckDuckGo search failed: ${ddgErr.message}`);
     }
-
-    const res = await axios.get("https://serpapi.com/search.json", {
-      params: {
-        engine: "google",
-        q: `${outletName} official website news`,
-        api_key: SERP_API_KEY,
-        num: 3,
-      },
-      headers: { "User-Agent": getRandomUserAgent() },
-      timeout: 10000,
-    });
-
-    const results = res.data.organic_results || [];
-    if (results.length > 0) {
-      // Return the first result's link
-      return results[0].link;
+    
+    // Fallback: try common patterns
+    console.log(`Trying common domain patterns...`);
+    const commonDomains = [
+      `https://www.${outletName.toLowerCase().replace(/\s+/g, '')}.com`,
+      `https://www.${outletName.toLowerCase().replace(/\s+/g, '')}.in`,
+      `https://${outletName.toLowerCase().replace(/\s+/g, '')}.com`,
+      `https://${outletName.toLowerCase().replace(/\s+/g, '')}online.com`,
+    ];
+    
+    for (const domain of commonDomains) {
+      try {
+        const response = await axios.head(domain, { timeout: 5000 });
+        if (response.status === 200) {
+          console.log(`✅ Found via pattern matching: ${domain}`);
+          return domain;
+        }
+      } catch (e) {
+        continue;
+      }
     }
-
-    return null;
+    
+    // Last resort: return first common domain
+    console.log(`⚠️  Using best guess: ${commonDomains[0]}`);
+    return commonDomains[0];
   } catch (err) {
     console.error("Error finding outlet website:", err.message);
     return null;
   }
 }
 
-// ---------------- Find multiple author pages dynamically ----------------
+// ---------------- Find multiple author pages using DuckDuckGo ----------------
 async function findAuthorsPages(outlet, maxPages = 5) {
   try {
-    if (!SERP_API_KEY) {
-      console.warn("SERP_API_KEY not found, will try direct website scraping");
+    console.log(`🔍 Finding author pages for: ${outlet} using DuckDuckGo...`);
+    
+    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(outlet + ' authors journalists team staff contributors')}`;
+    
+    try {
+      const response = await axios.get(searchUrl, {
+        headers: {
+          'User-Agent': getRandomUserAgent(),
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        timeout: 10000
+      });
+      
+      const cheerio = await import('cheerio');
+      const $ = cheerio.load(response.data);
+      
+      const pages = [];
+      $('.result__a').each((i, el) => {
+        if (pages.length >= maxPages) return false;
+        
+        const href = $(el).attr('href');
+        if (href && href.startsWith('http') && 
+            /author|profile|writer|journalist|team|staff|contributor|people/i.test(href)) {
+          pages.push(href);
+        }
+      });
+      
+      console.log(`✅ Found ${pages.length} author pages via DuckDuckGo`);
+      return [...new Set(pages)]; // remove duplicates
+    } catch (ddgErr) {
+      console.log(`⚠️  DuckDuckGo search failed: ${ddgErr.message}`);
       return [];
     }
-
-    const res = await axios.get("https://serpapi.com/search.json", {
-      params: {
-        engine: "google",
-        q: `${outlet} authors OR journalists OR team OR staff OR contributors`,
-        api_key: SERP_API_KEY,
-        num: maxPages,
-      },
-      headers: { "User-Agent": getRandomUserAgent() },
-      timeout: 10000,
-    });
-
-    const results = res.data.organic_results || [];
-    const pages = [];
-    for (const r of results) {
-      if (r.link && /author|profile|writer|journalist|team|staff|contributor|people/i.test(r.link)) {
-        pages.push(r.link);
-      }
-    }
-    return [...new Set(pages)]; // remove duplicates
   } catch (err) {
-    console.error("SerpAPI error:", err.message);
+    console.error("Error finding author pages:", err.message);
     return [];
   }
 }
@@ -185,47 +220,57 @@ async function scrapeAuthorsFromPage(url, limit = 50) {
       'editorial board', 'news team', 'web team', 'digital team'
     ];
 
-    // Helper function to validate journalist name
+    // Helper function to validate journalist name - SUPPORTS ALL LANGUAGES
     function isValidJournalistName(name) {
       if (!name || typeof name !== 'string') return false;
 
       const trimmed = name.trim();
 
-      // Length check (5-60 characters)
-      if (trimmed.length < 5 || trimmed.length > 60) return false;
+      // Length check (3-60 characters - relaxed for single-name Indic authors)
+      if (trimmed.length < 3 || trimmed.length > 60) return false;
 
-      // Must have at least 2 words (First Last)
+      // Must have at least 1 word (relaxed for Indic languages)
       const words = trimmed.split(/\s+/);
-      if (words.length < 2 || words.length > 5) return false;
+      const usesIndicScript = /[\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F\u0E00-\u0E7F]/.test(trimmed);
+      
+      // For Indic scripts (Hindi, Bengali, Tamil, Malayalam, Thai, etc.), allow single names
+      if (!usesIndicScript && (words.length < 2 || words.length > 6)) return false;
+      if (usesIndicScript && (words.length < 1 || words.length > 6)) return false;
 
       const lowerName = trimmed.toLowerCase();
 
       // Reject if exactly matches category
       if (INVALID_NAMES.includes(lowerName)) return false;
 
-      // Reject if any single word matches category (for 2-word names)
-      const invalidWords = words.filter(word =>
-        INVALID_NAMES.includes(word.toLowerCase())
-      );
-      if (invalidWords.length > 0 && words.length <= 2) return false;
-
-      // Must contain only valid characters (letters, spaces, dots, hyphens, apostrophes)
-      if (!/^[A-Za-z\s\.\-\']+$/.test(trimmed)) return false;
-
-      // Reject common non-name patterns
-      const rejectPatterns = [
-        /^(the|by|from|with|and|or)\s/i,
-        /\d{2,}/, // Contains multiple digits
-        /\s(desk|team|bureau|staff|editor|reporter|correspondent)$/i,
-        /^(breaking|latest|trending|updated)/i
-      ];
-
-      for (const pattern of rejectPatterns) {
-        if (pattern.test(trimmed)) return false;
+      // Reject if any single word matches category (for 2-word names ONLY if English)
+      if (!usesIndicScript) {
+        const invalidWords = words.filter(word =>
+          INVALID_NAMES.includes(word.toLowerCase())
+        );
+        if (invalidWords.length > 0 && words.length <= 2) return false;
       }
 
-      // Each word should be at least 2 characters
-      if (words.some(word => word.length < 2)) return false;
+      // Must contain valid characters: 
+      // - English: letters, spaces, dots, hyphens, apostrophes
+      // - Indic: Devanagari, Bengali, Tamil, Malayalam, Telugu, Kannada, Gujarati, Punjabi, Thai, etc.
+      if (!/^[A-Za-z\u0900-\u097F\u0980-\u09FF\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F\u0E00-\u0E7F\s\.\-\']+$/.test(trimmed)) return false;
+
+      // Reject common non-name patterns (only for English names)
+      if (!usesIndicScript) {
+        const rejectPatterns = [
+          /^(the|by|from|with|and|or)\s/i,
+          /\d{2,}/, // Contains multiple digits
+          /\s(desk|team|bureau|staff|editor|reporter|correspondent)$/i,
+          /^(breaking|latest|trending|updated)/i
+        ];
+
+        for (const pattern of rejectPatterns) {
+          if (pattern.test(trimmed)) return false;
+        }
+      }
+
+      // Each word should be at least 1 character (relaxed for all languages)
+      if (words.some(word => word.length < 1)) return false;
 
       return true;
     }
