@@ -44,34 +44,47 @@ const Contact = () => {
 
           <div className="grid md:grid-cols-3 gap-8 mb-12">
             {/* Contact Cards */}
-            <Card className="bg-card border-primary/20 p-6 text-center">
+            <Card className="bg-card border-primary/20 p-6 text-center hover:border-primary/40 transition-colors">
               <Mail className="w-8 h-8 text-primary mx-auto mb-4" />
               <h3 className="text-sm font-mono uppercase text-foreground mb-2">
                 Email
               </h3>
-              <p className="text-sm text-muted-foreground font-mono">
-                contact@atenflux.com
-              </p>
+              <a 
+                href="mailto:helloanshul91@gmail.com"
+                className="text-sm text-muted-foreground font-mono hover:text-primary transition-colors"
+              >
+                helloanshul91@gmail.com
+              </a>
             </Card>
 
-            <Card className="bg-card border-primary/20 p-6 text-center">
+            <Card className="bg-card border-primary/20 p-6 text-center hover:border-primary/40 transition-colors">
               <Github className="w-8 h-8 text-primary mx-auto mb-4" />
               <h3 className="text-sm font-mono uppercase text-foreground mb-2">
                 GitHub
               </h3>
-              <p className="text-sm text-muted-foreground font-mono">
-                github.com/atenflux
-              </p>
+              <a 
+                href="https://github.com/AnshulAlgoS"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-muted-foreground font-mono hover:text-primary transition-colors"
+              >
+                github.com/AnshulAlgoS
+              </a>
             </Card>
 
-            <Card className="bg-card border-primary/20 p-6 text-center">
+            <Card className="bg-card border-primary/20 p-6 text-center hover:border-primary/40 transition-colors">
               <Linkedin className="w-8 h-8 text-primary mx-auto mb-4" />
               <h3 className="text-sm font-mono uppercase text-foreground mb-2">
                 LinkedIn
               </h3>
-              <p className="text-sm text-muted-foreground font-mono">
-                linkedin.com/company/atenflux
-              </p>
+              <a 
+                href="https://www.linkedin.com/in/anshul-saxena-33567a1a8"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-muted-foreground font-mono hover:text-primary transition-colors"
+              >
+                linkedin.com/in/anshul-saxena
+              </a>
             </Card>
           </div>
 
