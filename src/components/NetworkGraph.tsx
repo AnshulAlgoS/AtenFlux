@@ -214,33 +214,64 @@ export const NetworkGraph = ({ selectedTopics = [], selectedOutlets = [] }: { se
 
     const g = svg.append('g');
 
-    // Bipartite force simulation
+    // Pre-calculate topic positions for performance
+    const topicNodes = graphData.nodes.filter(n => n.type === 'topic');
+    const journalistNodes = graphData.nodes.filter(n => n.type === 'journalist');
+    const topicPositions = new Map<string, number>();
+    
+    // PRE-POSITION NODES for warm start (eliminates initial chaos)
+    topicNodes.forEach((node, index) => {
+      const xPos = width * (0.1 + (index / topicNodes.length) * 0.8);
+      topicPositions.set(node.id, xPos);
+      // Set initial positions
+      node.x = xPos;
+      node.y = height * 0.25;
+      node.vx = 0;  // Zero velocity for instant start
+      node.vy = 0;
+    });
+    
+    // Position journalists in a grid below topics
+    const cols = Math.ceil(Math.sqrt(journalistNodes.length));
+    journalistNodes.forEach((node, index) => {
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+      node.x = width * (0.2 + (col / cols) * 0.6);
+      node.y = height * (0.6 + (row / Math.ceil(journalistNodes.length / cols)) * 0.3);
+      node.vx = 0;
+      node.vy = 0;
+    });
+
+    // Optimized bipartite force simulation with warm start
     const simulation = d3
       .forceSimulation<Node>(graphData.nodes)
+      .alpha(0.3)  // MUCH lower initial energy (was 0.8)
+      .alphaMin(0.001)  // Stop earlier
+      .alphaDecay(0.08)  // Even faster decay
+      .velocityDecay(0.7)  // Even more friction
       .force('link', d3.forceLink<Node, Link>(graphData.links)
         .id(d => d.id)
-        .distance(d => 180 - (d.value * 8))
-        .strength(0.8)
+        .distance(d => 150 - (d.value * 5))  // Shorter links
+        .strength(0.3)  // MUCH weaker for smoother movement
+        .iterations(1)
       )
       .force('charge', d3.forceManyBody()
-        .strength(d => d.type === 'topic' ? -800 : -300)
+        .strength(d => d.type === 'topic' ? -400 : -150)  // Much weaker repulsion
+        .distanceMax(300)  // Shorter range
+        .theta(0.9)  // Less accurate but faster (was default 0.9)
       )
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => d.val + 15))
+      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.02))
+      .force('collision', d3.forceCollide()
+        .radius(d => d.val + 10)
+        .strength(0.5)  // Gentler collision
+        .iterations(1)
+      )
       .force('y', d3.forceY<Node>()
         .y(d => d.type === 'topic' ? height * 0.25 : height * 0.75)
-        .strength(0.5)
+        .strength(0.2)  // Weaker vertical force
       )
       .force('x', d3.forceX<Node>()
-        .x(d => {
-          if (d.type === 'topic') {
-            const topicNodes = graphData.nodes.filter(n => n.type === 'topic');
-            const index = topicNodes.findIndex(n => n.id === d.id);
-            return width * (0.1 + (index / topicNodes.length) * 0.8);
-          }
-          return width / 2;
-        })
-        .strength(0.2)
+        .x(d => d.type === 'topic' ? (topicPositions.get(d.id) || width / 2) : width / 2)
+        .strength(0.1)  // Weaker horizontal force
       );
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
@@ -276,25 +307,31 @@ export const NetworkGraph = ({ selectedTopics = [], selectedOutlets = [] }: { se
         : 'drop-shadow(0 0 6px rgba(34,211,238,0.7))'
       )
       .on('mouseenter', function (event, d) {
-        const connectedIds = new Set<string>();
-        connectedIds.add(d.id);
+        // Pre-build connection map for better performance
+        const connectedIds = new Set<string>([d.id]);
         
+        // Use direct property access (faster than checking type)
         graphData.links.forEach(l => {
-          const sourceId = typeof l.source === 'string' ? l.source : (l.source as any).id;
-          const targetId = typeof l.target === 'string' ? l.target : (l.target as any).id;
+          const sourceId = (l.source as any).id || l.source;
+          const targetId = (l.target as any).id || l.target;
           
           if (sourceId === d.id) connectedIds.add(targetId);
           if (targetId === d.id) connectedIds.add(sourceId);
         });
 
-        node.style('opacity', n => connectedIds.has(n.id) ? 1 : 0.15);
+        // Batch DOM updates for better performance
+        node
+          .style('opacity', n => connectedIds.has(n.id) ? 1 : 0.15)
+          .filter((n: Node) => n.id === d.id)
+          .transition()
+          .duration(150)
+          .attr('r', d.val * 0.85);
+        
         link.style('opacity', l => {
-          const sourceId = typeof l.source === 'string' ? l.source : (l.source as any).id;
-          const targetId = typeof l.target === 'string' ? l.target : (l.target as any).id;
+          const sourceId = (l.source as any).id || l.source;
+          const targetId = (l.target as any).id || l.target;
           return (sourceId === d.id || targetId === d.id) ? 0.9 : 0.05;
         });
-
-        d3.select(this).transition().duration(200).attr('r', d.val * 0.85);
         
         if (tooltipRef.current) {
           tooltipRef.current.style.display = 'block';
@@ -332,10 +369,16 @@ export const NetworkGraph = ({ selectedTopics = [], selectedOutlets = [] }: { se
         }
       })
       .on('mouseleave', function (event, d) {
-        node.style('opacity', 1);
+        // Reset all at once for better performance
+        node
+          .style('opacity', 1)
+          .filter((n: Node) => n.id === d.id)
+          .transition()
+          .duration(150)
+          .attr('r', d.val / 2);
+        
         link.style('opacity', 0.4);
         
-        d3.select(this).transition().duration(200).attr('r', d.val / 2);
         if (tooltipRef.current) tooltipRef.current.style.display = 'none';
       })
       .call(
@@ -372,18 +415,39 @@ export const NetworkGraph = ({ selectedTopics = [], selectedOutlets = [] }: { se
       .style('user-select', 'none')
       .style('text-shadow', '0 2px 4px rgba(0,0,0,0.8)');
 
+    // Throttle tick updates using requestAnimationFrame for smooth 60fps
+    let ticking = false;
+    let tickCount = 0;
+    const maxTicks = 150; // Stop after 150 ticks (~2.5 seconds) - warm start needs fewer ticks
+    
     simulation.on('tick', () => {
-      link
-        .attr('x1', (d: any) => d.source.x!)
-        .attr('y1', (d: any) => d.source.y!)
-        .attr('x2', (d: any) => d.target.x!)
-        .attr('y2', (d: any) => d.target.y!);
+      if (ticking) return;
+      ticking = true;
+      tickCount++;
+      
+      requestAnimationFrame(() => {
+        link
+          .attr('x1', (d: any) => d.source.x!)
+          .attr('y1', (d: any) => d.source.y!)
+          .attr('x2', (d: any) => d.target.x!)
+          .attr('y2', (d: any) => d.target.y!);
 
-      node.attr('cx', d => d.x!).attr('cy', d => d.y!);
-      labels.attr('x', d => d.x!).attr('y', d => d.y!);
+        node.attr('cx', d => d.x!).attr('cy', d => d.y!);
+        labels.attr('x', d => d.x!).attr('y', d => d.y!);
+        
+        ticking = false;
+        
+        // Stop simulation when settled or max ticks reached
+        if (tickCount >= maxTicks || simulation.alpha() < 0.01) {
+          simulation.stop();
+        }
+      });
     });
 
-    return () => simulation.stop();
+    return () => {
+      simulation.stop();
+      tickCount = 0;
+    };
   }, [graphData, loading]);
 
   if (loading) {

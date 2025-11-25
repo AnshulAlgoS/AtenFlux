@@ -1,24 +1,73 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Filter, X } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
+import axios from 'axios';
 
 interface FiltersPanelProps {
   topics: string[];
-  outlets: string[];
+  outlets?: string[];  // Make optional since we'll fetch from backend
   onFilterChange: (filters: { topics: string[]; outlets: string[] }) => void;
 }
 
-export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelProps) => {
+export const FiltersPanel = ({ topics, outlets: propsOutlets = [], onFilterChange }: FiltersPanelProps) => {
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [selectedOutlets, setSelectedOutlets] = useState<string[]>([]);
+  const [fetchedOutlets, setFetchedOutlets] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  // Deduplicate and normalize outlets (case-insensitive)
+  // Fetch outlets from backend
+  useEffect(() => {
+    const fetchOutlets = async () => {
+      setLoading(true);
+      const urls = [
+        'http://localhost:5002/api/authors/profiles',
+        'https://aten-131r.onrender.com/api/authors/profiles',
+      ];
+
+      let authors: any[] | null = null;
+
+      for (const url of urls) {
+        try {
+          const res = await axios.get(url, { timeout: 10000 });
+          authors = res.data.profiles || res.data;
+          if (authors && authors.length > 0) {
+            console.log(`✅ Fetched ${authors.length} profiles from ${url}`);
+            break;
+          }
+        } catch (err: any) {
+          console.warn(`⚠️  Failed to fetch from ${url}:`, err.message);
+        }
+      }
+
+      if (authors && authors.length > 0) {
+        // Extract unique outlets from authors
+        const outletSet = new Set<string>();
+        authors.forEach((author: any) => {
+          if (author.outlet) {
+            outletSet.add(author.outlet);
+          }
+        });
+        setFetchedOutlets(Array.from(outletSet));
+        console.log(`📰 Found ${outletSet.size} unique outlets`);
+      }
+      
+      setLoading(false);
+    };
+
+    fetchOutlets();
+  }, []);
+
+  // Combine fetched outlets with props outlets and deduplicate
   const uniqueOutlets = useMemo(() => {
     const outletMap = new Map<string, string>();
     
-    outlets.forEach(outlet => {
+    // Merge both sources
+    const allOutlets = [...fetchedOutlets, ...propsOutlets];
+    
+    allOutlets.forEach(outlet => {
+      if (!outlet) return;
       const normalized = outlet.toLowerCase().trim();
       // Keep the first occurrence (with original casing)
       if (!outletMap.has(normalized)) {
@@ -30,7 +79,7 @@ export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelPr
     return Array.from(outletMap.values()).sort((a, b) => 
       a.toLowerCase().localeCompare(b.toLowerCase())
     );
-  }, [outlets]);
+  }, [fetchedOutlets, propsOutlets]);
 
   // Deduplicate topics as well
   const uniqueTopics = useMemo(() => {
@@ -106,6 +155,7 @@ export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelPr
       <div>
         <h4 className="text-xs font-mono uppercase text-muted-foreground mb-3">
           Outlets ({uniqueOutlets.length})
+          {loading && <span className="ml-2 text-primary animate-pulse">Loading...</span>}
         </h4>
         {uniqueOutlets.length > 0 ? (
           <div className="flex flex-wrap gap-2">
@@ -125,9 +175,13 @@ export const FiltersPanel = ({ topics, outlets, onFilterChange }: FiltersPanelPr
               </Button>
             ))}
           </div>
+        ) : loading ? (
+          <p className="text-xs text-muted-foreground font-mono italic animate-pulse">
+            Fetching outlets from backend...
+          </p>
         ) : (
           <p className="text-xs text-muted-foreground font-mono italic">
-            No outlets available
+            No outlets available. Scrape some outlets first.
           </p>
         )}
       </div>
