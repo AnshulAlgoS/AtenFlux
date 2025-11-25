@@ -180,17 +180,63 @@ SERP_API_KEY=<your-serpapi-key>
 
 ---
 
-## 🧪 Quick Test
+## 🧪 Testing & Debugging
+
+### Quick API Test
 
 ```bash
+# Start a scrape job
 curl -X POST http://localhost:5002/api/authors/discover-and-scrape \
   -H 'Content-Type: application/json' \
-  -d '{"outlet":"Pink Villa","maxAuthors":30}'
+  -d '{"outlet":"The Hindu","maxAuthors":30}'
 
+# Check job status (replace <jobId> with actual job ID from above)
 curl http://localhost:5002/api/authors/job-status/<jobId>
 
-curl 'http://localhost:5002/api/authors/profiles?outlet=pink%20villa&limit=100'
+# Get saved profiles
+curl 'http://localhost:5002/api/authors/profiles?outlet=the%20hindu&limit=100'
 ```
+
+### Direct Scraper Test (with verbose logs)
+
+```bash
+cd Backend
+node test-scraper.js "The Hindu" 10
+```
+
+### Common Issues & Solutions
+
+**❌ "No authors found"**
+
+- Website might use JavaScript rendering → Check if articles load without JS
+- Bylines might use generic terms (e.g., "Staff Reporter") → These are filtered out
+- Website might block non-browser requests → Try different outlet
+
+**⚠️ "Slow scraping"**
+
+- This is normal! Processing 300+ articles takes 2-3 minutes
+- Scraper uses parallel requests (5 concurrent)
+- Progress logs appear every 10 articles
+
+**🌍 "Foreign outlet returned instead of Indian"**
+
+- Scraper aggressively prioritizes `.in` domains (+100,000 priority)
+- If outlet has both .com and .in versions, .in is always preferred
+- Check logs for priority scores
+
+### Monitoring Production (Render.com)
+
+Logs are available in Render dashboard. Look for:
+
+```
+📊 Progress: X/300 articles → Y unique authors found
+```
+
+If logs stop, check:
+
+1. Memory limit (1GB on free tier)
+2. Timeout (30s request limit on free tier)
+3. Cold starts (first request takes longer)
 
 ---
 

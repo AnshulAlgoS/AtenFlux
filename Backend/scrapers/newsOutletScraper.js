@@ -942,8 +942,13 @@ async function extractAuthorsFromArticles(articles, website, maxAuthors = 35) {
     const batchEnd = Math.min(batchStart + CONCURRENT_REQUESTS, processLimit);
     const batchArticles = articles.slice(batchStart, batchEnd);
     
-    const batchPromises = batchArticles.map(async (article) => {
+    const batchPromises = batchArticles.map(async (article, idx) => {
       try {
+        // DEBUG: Show which article we're processing
+        if (processed === 0 && idx === 0) {
+          console.log(`\n  🔍 SAMPLE ARTICLE: ${article.url.substring(0, 80)}...`);
+        }
+        
         const response = await axios.get(article.url, {
           headers: { 
             'User-Agent': getRandomUserAgent(),
@@ -955,6 +960,25 @@ async function extractAuthorsFromArticles(articles, website, maxAuthors = 35) {
         
         const $ = cheerio.load(response.data);
         const foundAuthors = [];
+        
+        // DEBUG: For first article, show what selectors we're checking
+        if (processed === 0 && idx === 0) {
+          console.log(`  🔎 Checking selectors...`);
+          console.log(`     - JSON-LD scripts: ${$('script[type="application/ld+json"]').length}`);
+          console.log(`     - Meta author tags: ${$('meta[name="author"], meta[property="article:author"]').length}`);
+          console.log(`     - Author links: ${$('a[href*="/author/"], a[rel="author"]').length}`);
+          console.log(`     - Byline elements: ${$('.byline, .author, .author-name').length}`);
+          
+          // Show SAMPLE of what we found
+          const sampleMeta = $('meta[name="author"]').attr('content');
+          if (sampleMeta) console.log(`     📝 Sample meta author: "${sampleMeta}"`);
+          
+          const sampleByline = $('.byline, .author').first().text().trim().substring(0, 50);
+          if (sampleByline) console.log(`     📝 Sample byline text: "${sampleByline}"`);
+          
+          const sampleLink = $('a[href*="/author/"]').first().text().trim();
+          if (sampleLink) console.log(`     📝 Sample author link: "${sampleLink}"`);
+        }
         
         // STRATEGY 1: JSON-LD structured data (MOST RELIABLE - Priority 1)
         $('script[type="application/ld+json"]').each((idx, el) => {
@@ -1181,13 +1205,27 @@ async function extractAuthorsFromArticles(articles, website, maxAuthors = 35) {
         return foundAuthors;
         
       } catch (err) {
+        // DEBUG: Log first few errors to understand what's failing
+        if (processed < 20) {
+          console.log(`     ⚠️  Article fetch failed: ${article.url.substring(0, 60)}... (${err.message})`);
+        }
         return [];
       }
     });
     
     const batchResults = await Promise.all(batchPromises);
     
+    // DEBUG: Log what we got from this batch
+    const totalAuthorsInBatch = batchResults.reduce((sum, arr) => sum + arr.length, 0);
+    if (totalAuthorsInBatch > 0) {
+      console.log(`     🎯 Batch found ${totalAuthorsInBatch} authors from ${batchArticles.length} articles`);
+      // Show first few authors found
+      const sampleAuthors = batchResults.flat().slice(0, 3).map(a => `${a.name}(${a.source})`).join(', ');
+      console.log(`     👤 Sample: ${sampleAuthors}`);
+    }
+    
     // Process all found authors
+    let addedInBatch = 0;
     for (const foundAuthors of batchResults) {
       for (const authorData of foundAuthors) {
         const key = normalizeAuthorName(authorData.name);
@@ -1200,15 +1238,20 @@ async function extractAuthorsFromArticles(articles, website, maxAuthors = 35) {
             name: authorData.name.trim(),
             profileUrl: authorData.profileUrl || `${website}/author/${slug}`
           });
+          addedInBatch++;
         }
       }
     }
     
+    if (addedInBatch > 0) {
+      console.log(`     ✅ Added ${addedInBatch} NEW unique authors (total now: ${authorsMap.size})`);
+    }
+    
     processed += batchArticles.length;
     
-    // Progress logging
-    if (processed % 25 === 0 || processed === processLimit) {
-      console.log(`  📊 Processed ${processed}/${processLimit} articles → Found ${authorsMap.size} unique authors`);
+    // Progress logging (MORE FREQUENT)
+    if (processed % 10 === 0 || processed === processLimit) {
+      console.log(`  📊 Progress: ${processed}/${processLimit} articles → ${authorsMap.size} unique authors found`);
     }
     
     // Small delay between batches to avoid overwhelming the server
@@ -1217,6 +1260,24 @@ async function extractAuthorsFromArticles(articles, website, maxAuthors = 35) {
   
   console.log(`\n✅ Extraction complete: ${authorsMap.size} unique authors from ${processed} articles`);
   console.log(`   Success rate: ${((authorsMap.size / processed) * 100).toFixed(1)}% articles had valid authors`);
+  
+  // DIAGNOSTIC: If we found very few or no authors, provide detailed feedback
+  if (authorsMap.size === 0) {
+    console.log(`\n❌ WARNING: NO AUTHORS FOUND!`);
+    console.log(`   Possible reasons:`);
+    console.log(`   1. Website uses JavaScript rendering (needs Puppeteer)`);
+    console.log(`   2. Website blocks non-browser requests`);
+    console.log(`   3. Articles use generic bylines (e.g., "Staff Reporter")`);
+    console.log(`   4. Byline format doesn't match our selectors`);
+    console.log(`   5. Website uses uncommon HTML structure`);
+    console.log(`\n   📋 Diagnosis:`);
+    console.log(`   - Articles collected: ${articles.length}`);
+    console.log(`   - Articles processed: ${processed}`);
+    console.log(`   - Success rate: 0%`);
+  } else if (authorsMap.size < 5) {
+    console.log(`\n⚠️  WARNING: Very few authors found (${authorsMap.size})`);
+    console.log(`   Consider increasing article count or checking website structure`);
+  }
   
   return Array.from(authorsMap.values());
 }
@@ -1796,15 +1857,20 @@ async function extractAuthorData(author, outletName, website) {
 // MAIN SCRAPER FUNCTION
 // ============================================================
 
-export async function scrapeLightweight(outletName, maxAuthors = 35) {
-  console.log(`\n${'='.repeat(80)}`);
-  console.log(`🚀 AUTONOMOUS NEWS OUTLET SCRAPER`);
-  console.log(`${'='.repeat(80)}`);
-  console.log(`📰 Input: "${outletName}"`);
-  console.log(`🎯 Target: ${maxAuthors}+ journalist profiles`);
-  console.log(`🔧 Mode: Fully Autonomous (NO Hardcoded URLs, NO Pre-saved Mappings)`);
-  console.log(`🌍 Language Support: All Indian languages + English`);
-  console.log(`${'='.repeat(80)}\n`);
+export async function scrapeLightweight(outletName, maxAuthors = 35, progressCallback = null) {
+  const log = (msg) => {
+    console.log(msg);
+    if (progressCallback) progressCallback(msg);
+  };
+  
+  log(`\n${'='.repeat(80)}`);
+  log(`🚀 AUTONOMOUS NEWS OUTLET SCRAPER`);
+  log(`${'='.repeat(80)}`);
+  log(`📰 Input: "${outletName}"`);
+  log(`🎯 Target: ${maxAuthors}+ journalist profiles`);
+  log(`🔧 Mode: Fully Autonomous (NO Hardcoded URLs, NO Pre-saved Mappings)`);
+  log(`🌍 Language Support: All Indian languages + English`);
+  log(`${'='.repeat(80)}\n`);
   
   try {
     // Step 1: Detect website
