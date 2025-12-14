@@ -121,7 +121,7 @@ const INVALID_NAMES = new Set([
   'news bureau', 'city bureau', 'delhi bureau', 'mumbai bureau', 'chennai bureau',
   'kolkata bureau', 'bangalore bureau', 'hyderabad bureau', 'pune bureau',
   'press trust of india', 'press journal', 'free press', 'special correspondent',
-  'our correspondent', 'staff correspondent', 'special reporter', 'our reporter',
+  'our correspondent', 'staff correspondent', 'special reporter', 'our reporter'
 ]);
 
 // Patterns to reject (partial matches)
@@ -163,265 +163,14 @@ function isValidName(name) {
   if (!hasUpperLatin && !isEditorialName(clean)) return false;
 
   if (/^\d|[@#$%^&*()+=\[\]{}|\\<>\/]/.test(clean)) return false;
-  if (!(new RegExp("^[\\p{L}\\s.\\-']+$","u")).test(clean)) return false;
+  if (!(new RegExp("^[\\p{L}\\s.\\-']+$", "u")).test(clean)) return false;
   const words = clean.split(/\s+/).filter(w => w.length > 1);
   if (words.length < 1 || words.length > 5) return false;
   const capWords = words.filter(w => /^[A-ZÀ-ÖØ-Ý][\p{L}'\-]+$/u.test(w) || /^[A-ZÀ-ÖØ-Ý]{2,}$/.test(w));
   if (capWords.length === 0 && !isEditorialName(clean)) return false;
   return true;
 }
-function toSlug(str) {
-  return (str || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-');
-}
 
-function isEditorialName(str) {
-  const n = (str || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-  return n === 'la redaction' || n === 'redaction' || n.includes('redaktion');
-}
-
-function capitalize(word) {
-  if (!word) return '';
-  const w = word.toLowerCase();
-  return w.charAt(0).toUpperCase() + w.slice(1);
-}
-
-function formatSlugName(slug) {
-  return String(slug || '')
-    .replace(/^\/+|\/+$/g, '')
-    .split('/')
-    .pop()
-    .split(/[-_]+/)
-    .map(capitalize)
-    .join(' ')
-    .trim();
-}
-
-function extractTagSlugs($) {
-  const seen = new Set();
-  const tags = [];
-  $('a[href*="/tag/"]').each((i, el) => {
-    const href = $(el).attr('href') || '';
-    const m = href.match(/\/tag\/([^\/?#]+)/i);
-    if (m && m[1]) {
-      const slug = decodeURIComponent(m[1]).trim();
-      if (slug && !seen.has(slug)) {
-        seen.add(slug);
-        tags.push(slug);
-      }
-    }
-  });
-  return tags;
-}
-
-export async function extractArticleAuthorSimple(articleUrl) {
-  const $ = await fetchPage(articleUrl);
-  if (!$) {
-    return { url: articleUrl, author: 'Unknown', confidence: 'low', people_candidates: [] };
-  }
-  const path = (() => { try { return new URL(articleUrl).pathname.toLowerCase(); } catch { return ''; } })();
-  const peopleCandidates = extractTagSlugs($);
-  if (/\/author\/[^\/]+\/?$/i.test(path)) {
-    const slug = path.split('/').filter(Boolean).pop();
-    const name = formatSlugName(slug);
-    return { url: articleUrl, author: name || 'Unknown', confidence: name ? 'high' : 'low', people_candidates: peopleCandidates };
-  }
-
-  // Scan the last N non-empty paragraphs in the main body for explicit bylines/author credits
-  let candidate = null;
-  let candidateHref = null;
-  let candidateConfidence = 'low';
-  let blocksToCheck = [];
-  const rawBlocks = [
-    $('article .entry-content p'),
-    $('.entry-content p'),
-    $('article p'),
-    $('.post-content p'),
-    $('.single-post p'),
-    $('.article-content p'),
-    $('.post p'),
-    $('.entry p'),
-    $('body p')
-  ];
-  // Flatten all candidate blocks/paragraphs from the above
-  rawBlocks.forEach($set => {
-    $set.each((_, el) => {
-      blocksToCheck.push($(el));
-    });
-  });
-  // Deduplicate, take the last 8 meaningful blocks
-  blocksToCheck = blocksToCheck.filter($p => $p.text().trim().length > 4);
-  blocksToCheck = blocksToCheck.slice(-8);
-
-  // Patterns: Par Prénom Nom, Publié par Prénom Nom, etc — also bold/strong in last lines
-  const explicitAuthorRegex = /^(Par|Publié par|Rédigé par|With|By|Ecrit par|Écrit par|Rédaction par)\s+([A-ZÀ-ÖØ-Ý][\p{L}'\-]+(?:\s+[A-ZÀ-ÖØ-Ý][\p{L}'\-]+){0,3})\b/i;
-  const nameRegex = /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/u;
-  for (let i = blocksToCheck.length - 1; i >= 0; i--) {
-    const $p = blocksToCheck[i];
-    // Direct text in this paragraph
-    let t = $p.text().trim();
-    // Bold/strong within paragraph
-    let strong = $p.find('strong, b').text().trim();
-    // Prefer strong (if exists and not too short), else fallback to paragraph text
-    let txt = (strong && strong.length > 3 && strong.length < 80) ? strong : t;
-    let matched = txt.match(explicitAuthorRegex);
-    if (matched && matched[2] && isValidName(matched[2]) && !isEditorialName(matched[2])) {
-      candidate = matched[2].trim();
-      candidateConfidence = 'high';
-    } else if (!candidate && txt.length < 80 && txt.length > 4) {
-      // Fallback: Just name in bold at end
-      let nm = txt.match(nameRegex);
-      if (nm && nm[1] && isValidName(nm[1]) && !isEditorialName(nm[1])) {
-        candidate = nm[1].trim();
-        candidateConfidence = 'medium';
-      }
-    }
-    // If a candidate is found, check for <a href> to tag, author or contributor page in this block
-    if (candidate && !candidateHref) {
-      $p.find('a[href]').each((_, el) => {
-        const href = $(el).attr('href') || '';
-        if (/\/tag\/(?!category)/i.test(href) || /\/author\//i.test(href) || /\/profile\//i.test(href) || /\/contributors?\//i.test(href)) {
-          // Promote to absolute
-          try {
-            let authorUrl = href.startsWith('http') ? href : new URL(href, articleUrl).href;
-            candidateHref = authorUrl;
-          } catch {}
-        }
-      });
-      // Stop after the first solid find
-      break;
-    }
-  }
-  // If candidate found this way, return with canonical URL
-  if (candidate) {
-    return {
-      url: articleUrl,
-      author: candidate,
-      authorProfileUrl: candidateHref || null,
-      confidence: candidateConfidence,
-      people_candidates: peopleCandidates
-    };
-  }
-
-  // Standard extraction region (original logic below)
-  const bodySel = [
-    'article [itemprop="articleBody"]',
-    'article .entry-content',
-    '.entry-content',
-    '.post-content',
-    '.article-content',
-    'article',
-    '.single-post',
-    '.post',
-    '.entry'
-  ];
-  let text = '';
-  for (const sel of bodySel) {
-    const t = $(sel).first().text().trim();
-    if (t && t.length >= 10) { text = t; break; }
-  }
-  if (!text) {
-    text = $('body').text().trim();
-  }
-  const first500 = text.substring(0, 500);
-  const last500 = text.slice(-500);
-  const normFirst = first500
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-  if (/\bla redaction\b/.test(normFirst)) {
-    return { url: articleUrl, author: 'La rédaction', confidence: 'medium', people_candidates: peopleCandidates };
-  }
-  const rx = new RegExp('(Dossier\\s+réalisé\\s+par|Par|Rédigé\\s+par|Publié\\s+par)\\s+([\\p{L}][\\p{L}\'\\-]+(?:\\s+[\\p{L}][\\p{L}\'\\-]+){0,3})','iu');
-  const m = first500.match(rx);
-  if (m && m[2]) {
-    const name = m[2].trim();
-    if (isEditorialName(name)) {
-      return { url: articleUrl, author: 'La rédaction', confidence: 'medium', people_candidates: peopleCandidates };
-    }
-    for (const slug of peopleCandidates.slice(0, 5)) {
-      const url = `${new URL(articleUrl).origin}/tag/${slug}/`;
-      await fetchPage(url);
-    }
-    return { url: articleUrl, author: name, confidence: 'high', people_candidates: peopleCandidates };
-  }
-  const normLast = last500
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-  if (/\bla redaction\b/.test(normLast)) {
-    return { url: articleUrl, author: 'La rédaction', confidence: 'medium', people_candidates: peopleCandidates };
-  }
-  const m2 = last500.match(rx);
-  if (m2 && m2[2]) {
-    const name2 = m2[2].trim();
-    if (isEditorialName(name2)) {
-      return { url: articleUrl, author: 'La rédaction', confidence: 'medium', people_candidates: peopleCandidates };
-    }
-    for (const slug of peopleCandidates.slice(0, 5)) {
-      const url = `${new URL(articleUrl).origin}/tag/${slug}/`;
-      await fetchPage(url);
-    }
-    return { url: articleUrl, author: name2, confidence: 'high', people_candidates: peopleCandidates };
-  }
-  // End-of-article bold names inside paragraphs
-  const paraSets = [
-    $('article .entry-content p'),
-    $('.entry-content p'),
-    $('article p'),
-    $('.post-content p')
-  ];
-  const banned = new Set(['la rédaction','commune','maire','président','ailleurs','ministère','gouvernement','déclarations publiques','les déclarations publiques du','déclaration publique','république','visiteur']);
-  const nameCandidateRx = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}|[A-Z]{2,}(?:\s+[A-Z]{2,}){1,3})\b/u;
-  for (const set of paraSets) {
-    const count = set.length;
-    for (let i = Math.max(0, count - 6); i < count; i++) {
-      const p = set.eq(i);
-      const bold = p.find('strong, b').text().trim() || p.text().trim();
-      if (!bold || bold.length < 3 || bold.length > 100) continue;
-      const bylineMatch = bold.match(rx);
-      if (bylineMatch && bylineMatch[2]) {
-        const nm = bylineMatch[2].trim();
-        if (isEditorialName(nm)) {
-          return { url: articleUrl, author: 'La rédaction', confidence: 'medium', people_candidates: peopleCandidates };
-        }
-        for (const slug of peopleCandidates.slice(0, 5)) {
-          const url = `${new URL(articleUrl).origin}/tag/${slug}/`;
-          await fetchPage(url);
-        }
-        return { url: articleUrl, author: nm, confidence: 'high', people_candidates: peopleCandidates };
-      }
-      const nameOnly = bold.match(nameCandidateRx);
-      if (nameOnly) {
-        const nm = nameOnly[1].trim();
-        if (isEditorialName(nm)) {
-          return { url: articleUrl, author: 'La rédaction', confidence: 'medium', people_candidates: peopleCandidates };
-        }
-        const lower = nm.toLowerCase();
-        if (!banned.has(lower) && isValidName(nm)) {
-          const inFirst = first500.includes(nm);
-          const inLast = last500.includes(nm);
-          const conf = inFirst && inLast ? 'high' : 'medium';
-          for (const slug of peopleCandidates.slice(0, 5)) {
-            const url = `${new URL(articleUrl).origin}/tag/${slug}/`;
-            await fetchPage(url);
-          }
-          return { url: articleUrl, author: nm, confidence: conf, people_candidates: peopleCandidates };
-        }
-      }
-    }
-  }
-  return { url: articleUrl, author: 'Unknown', confidence: 'low', people_candidates: peopleCandidates };
-}
 // ============ ROLE PATTERNS ============
 const ROLE_PATTERNS = [
   { p: /editor[\s-]?in[\s-]?chief/i, r: 'Editor-in-Chief' },
@@ -461,27 +210,7 @@ const ROLE_PATTERNS = [
   { p: /health\s*reporter/i, r: 'Health Reporter' },
   { p: /environment\s*reporter/i, r: 'Environment Reporter' },
   { p: /international\s*(affairs)?\s*reporter/i, r: 'International Affairs Reporter' },
-  { p: /education\s*reporter/i, r: 'Education Reporter' },
-  { p: /rédacteur\s*en\s*chef/i, r: 'Editor-in-Chief' },
-  { p: /rédactrice\s*en\s*chef/i, r: 'Editor-in-Chief' },
-  { p: /chefredakteur/i, r: 'Editor-in-Chief' },
-  { p: /chef\s*de\s*bureau/i, r: 'Bureau Chief' },
-  { p: /rédacteur/i, r: 'Editor' },
-  { p: /rédactrice/i, r: 'Editor' },
-  { p: /redakteur/i, r: 'Editor' },
-  { p: /journaliste/i, r: 'Journalist' },
-  { p: /journalistin/i, r: 'Journalist' },
-  { p: /korrespondent/i, r: 'Correspondent' },
-  { p: /kolumnist/i, r: 'Columnist' },
-  { p: /chroniqueur/i, r: 'Columnist' },
-  { p: /chroniqueuse/i, r: 'Columnist' },
-  { p: /éditorialiste/i, r: 'Columnist' },
-  { p: /auteur/i, r: 'Writer' },
-  { p: /autrice/i, r: 'Writer' },
-  { p: /autor(in)?/i, r: 'Writer' },
-  { p: /moderator(in)?/i, r: 'Presenter' },
-  { p: /animateur|animatrice/i, r: 'Presenter' },
-  { p: /ressortleiter/i, r: 'Senior Editor' }
+  { p: /education\s*reporter/i, r: 'Education Reporter' }
 ];
 
 function matchRole(text) {
@@ -763,10 +492,6 @@ const KNOWN_WEBSITES = {
   'nyt': 'https://www.nytimes.com',
   'washington post': 'https://www.washingtonpost.com',
   'al jazeera': 'https://www.aljazeera.com',
-  'laquestion.info': 'https://www.laquestion.info',
-  'laquestion': 'https://www.laquestion.info',
-  'la question': 'https://www.laquestion.info',
-  'laquestion info': 'https://www.laquestion.info',
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
@@ -792,8 +517,11 @@ async function detectOutletWebsite(outletName) {
     }
   }
 
-  // STEP 2: GOOGLE DETECTION (PRIMARY)
-  console.log(`  Google search...`);
+
+  // STEP 2: SERPER GLOBAL
+
+  console.log(`  Global search...`);
+
   const globalQueries = [
     `${cleanName} official website`,
     `${cleanName} news`,
@@ -801,45 +529,30 @@ async function detectOutletWebsite(outletName) {
     `${cleanName} newspaper`,
     `"${cleanName}" official`
   ];
-  const googleCandidate = await runSerperTier(globalQueries, cleanName);
-  let googleValid = false;
-  if (googleCandidate) {
-    console.log(`  Google candidate: ${googleCandidate}`);
-    try {
-      const u = new URL(googleCandidate);
-      const rej = isPlatformRejected(u.hostname);
-      const val = await validateNewsroomStructure(googleCandidate);
-      googleValid = !rej && !!val.ok;
-      if (!googleValid) {
-        console.log(`  Google candidate rejected: ${rej || val.reason}`);
-      }
-    } catch { googleValid = false; }
-  }
-  // STEP 3: SUPPLEMENTARY PAGES FROM GOOGLE RESULTS
-  /*let supplementalCandidate = null;
-  try {
-    const suppPages = await collectSupplementaryPages(cleanName, globalQueries, googleCandidate);
-    console.log(`  Supplementary pages discovered: ${suppPages.length}`);
-    for (const sp of suppPages) {
-      const site = await getExternalWebsiteFromPage(sp, cleanName);
-      if (!site) { console.log(`  No site from: ${sp}`); continue; }
+
+  const globalResult = await runSerperTier(globalQueries, cleanName);
+  if (globalResult) {
+    // --- IMPROVEMENT: Platform rejection and brute force preference ---
+    const hostRejected = isPlatformRejected(new URL(globalResult).hostname);
+    if (hostRejected) {
+      // Try brute force TLD for better domain
       try {
-        const host = new URL(site).hostname;
-        const rej = isPlatformRejected(host);
-        if (rej) { console.log(`  Rejected ${site}: ${rej}`); continue; }
-        const val = await validateNewsroomStructure(site);
-        if (val.ok) { console.log(`  Accepted supplemental: ${site}`); supplementalCandidate = site; break; }
-        else { console.log(`  Invalid newsroom: ${site} – ${val.reason}`); }
-      } catch { console.log(`  Invalid URL from supplemental: ${site}`); }
+        const tld = await detectCountryTLDFromSearch(cleanName);
+        const brute = await bruteForceByTLD(cleanName, tld);
+        if (brute) {
+          console.log(`  Selected website (prefer brute-force over rejected SERP/Wordpress): ${brute}`);
+          return brute;
+        } else {
+          console.log(`  SERPER result rejected (${hostRejected}), but bruteForce found nothing. Returning rejected SERPER: ${globalResult}`);
+        }
+      } catch {
+        console.log(`  SERPER result rejected (${hostRejected}), bruteForce errored. Returning rejected SERPER: ${globalResult}`);
+      }
+    } else {
+      console.log(`  Selected website: ${globalResult}`);
+      return globalResult;
     }
-  } catch {}
-
-  if (supplementalCandidate) {
-    console.log(`  Selected website (supplementary page): ${supplementalCandidate}`);
-    return supplementalCandidate;
-  } */
-
-  // STEP 3: COUNTRY-GUIDED BRUTE-FORCE DOMAIN GUESSING
+  }
   try {
     const tld = await detectCountryTLDFromSearch(cleanName);
     const brute = await bruteForceByTLD(cleanName, tld);
@@ -848,31 +561,10 @@ async function detectOutletWebsite(outletName) {
       return brute;
     }
   } catch { }
-
-  /*
-   Disabled – Supplementary pages from Google results (kept for reference)
-   const suppPages = await collectSupplementaryPages(cleanName, globalQueries, googleCandidate);
-   console.log(`  Supplementary pages discovered: ${suppPages.length}`);
-   for (const sp of suppPages) {
-     const site = await getExternalWebsiteFromPage(sp, cleanName);
-     if (!site) { console.log(`  No site from: ${sp}`); continue; }
-     try {
-       const host = new URL(site).hostname;
-       const rej = isPlatformRejected(host);
-       if (rej) { console.log(`  Rejected ${site}: ${rej}`); continue; }
-       const val = await validateNewsroomStructure(site);
-       if (val.ok) { console.log(`  Accepted supplemental: ${site}`); return site; }
-       else { console.log(`  Invalid newsroom: ${site} – ${val.reason}`); }
-     } catch { console.log(`  Invalid URL from supplemental: ${site}`); }
-   }
-  */
-
   if (googleValid && googleCandidate) {
     console.log(`  Selected website (google): ${googleCandidate}`);
     return googleCandidate;
   }
-
-
   //  STEP 4: SMART GLOBAL DOMAIN GUESSING
 
   console.log(`   Trying domain guessing...`);
@@ -929,6 +621,7 @@ async function detectOutletWebsite(outletName) {
   }
 
   console.log(`   Could not detect website`);
+
   // STEP 5: DuckDuckGo fallback
   try {
     console.log(`  🔎 DuckDuckGo fallback search...`);
@@ -947,714 +640,6 @@ async function detectOutletWebsite(outletName) {
   } catch { }
   return null;
 }
-
-async function extractWebsiteFromSocialBio(url) {
-  const debug = !!process.env.DEBUG_FB_SITE_DETECT;
-  try {
-    const $ = await fetchPage(url);
-    if (!$) return null;
-    const anchors = [];
-    $('a[href]').each((_, el) => {
-      const href = ($(el).attr('href') || '').trim();
-      if (!href) return;
-      if (/^\//.test(href)) return;
-      try {
-        let u = new URL(/^https?:\/\//.test(href) ? href : `https://${href}`);
-        anchors.push(u.toString());
-      } catch { }
-    });
-    const bioAboutBlocks = [];
-    const bioSelectors = [
-      '.about', '.bio', '[role=bio]', '[itemprop="description"]', '.profile-bio', '.author-about', '.author-description', '.profile-bio__text',
-      '.description', '.profile__bio'
-    ];
-    for (const sel of bioSelectors) {
-      $(sel).each((_, el) => {
-        const txt = $(el).text().trim();
-        if (txt && txt.length > 3) bioAboutBlocks.push(txt);
-      });
-    }
-    $("div,h1,h2,h3,h4,h5").each((_, el) => {
-      const c = $(el).attr("class") || '';
-      if (/about|bio/i.test(c)) {
-        const t = $(el).text().trim();
-        if (t && t.length > 3) bioAboutBlocks.push(t);
-      }
-    });
-    const allFound = new Set(anchors);
-    for (const txt of bioAboutBlocks) {
-      for (const u of extractAllPotentialUrlsFromText(txt)) allFound.add(u);
-    }
-    const rawText = [
-      $('meta[property="og:description"]').attr('content') || '',
-      $('meta[name="description"]').attr('content') || '',
-      $('body').text() || ''
-    ].join(' ');
-    for (const u of extractAllPotentialUrlsFromText(rawText)) allFound.add(u);
-    const candidates = Array.from(allFound);
-    const slug = (() => {
-      try { return new URL(url).pathname.split('/').filter(Boolean).slice(-1)[0]?.toLowerCase() || ''; } catch { return ''; }
-    })();
-    for (let a of candidates) {
-      if (/^(https?:\/\/)?(t\.co|bit\.ly|linktr\.ee)\//i.test(a)) {
-        try {
-          const res = await axios.get(a, { timeout: 8000, maxRedirects: 5, headers: { 'User-Agent': getUA() }, validateStatus: s => s < 600 });
-          const finalUrl = (res.request && (res.request.responseURL || res.request.res?.responseUrl)) || a;
-          a = finalUrl;
-        } catch { }
-      }
-      try {
-        const u = new URL(a);
-        const lcHost = u.hostname.toLowerCase();
-        if (isBlockedInfraHost(lcHost)) { if (debug) console.log(`[REJECT] ${a} blocked by infra host list`); continue; }
-        if (/facebook|instagram|twitter|x\.com|linkedin|blogspot|wordpress|medium|about\.me|muckrack|shutterstock/.test(lcHost)) continue;
-        if ((slug && (lcHost.replace(/^www\./, '').replace(/-/g, '').includes(slug) || a.toLowerCase().includes(slug))) ||
-          /\.co\.za$|\.co\.in$|\.com$|\.net$|\.org$|\.ng$|\.ke$|\.pk$|\.za$|\.africa$/.test(lcHost)) {
-          if (await verifyUrl(a)) { if (debug) console.log(`[DETECT_SOCIAL_SITE] Accepted (slug/ccTLD): ${a}`); return a; }
-        }
-      } catch { }
-      try {
-        const u = new URL(a);
-        const lcHost = u.hostname.toLowerCase();
-        if (isBlockedInfraHost(lcHost)) { if (debug) console.log(`[REJECT] ${a} blocked by infra host list`); continue; }
-        if (/facebook|instagram|twitter|x\.com|linkedin|blogspot|wordpress|medium|about\.me|muckrack|shutterstock/.test(lcHost)) continue;
-        if (await verifyUrl(a)) { if (debug) console.log(`[DETECT_SOCIAL_SITE] Accepted (fallback live): ${a}`); return a; }
-      } catch { }
-    }
-    return null;
-  } catch (e) { if (debug) console.log('extractWebsiteFromSocialBio error:', e); return null; }
-}
-
-async function getFacebookPageWebsiteViaGraph(fbUrl) {
-  const debug = !!process.env.DEBUG_FB_SITE_DETECT;
-  try {
-    const token = process.env.FACEBOOK_GRAPH_ACCESS_TOKEN || process.env.FACEBOOK_GRAPH_API_KEY;
-    if (!token) return null;
-    // First try resolving by URL (robust for various slug formats)
-    try {
-      const resolveRes = await axios.get(
-        `https://graph.facebook.com/v18.0/?id=${encodeURIComponent(fbUrl)}&fields=id,link,website,about,description,og_object&access_token=${encodeURIComponent(token)}`,
-        { timeout: 8000 }
-      );
-      const rd = resolveRes.data || {};
-      if (debug) console.log('FB Graph API resolve respones:', JSON.stringify(rd, null, 2));
-      const resolvedSite = (rd.website || rd.og_object?.url || '').trim();
-      if (resolvedSite) {
-        const url = /^https?:\/\//.test(resolvedSite) ? resolvedSite : `https://${resolvedSite}`;
-        const ok = await verifyUrl(url);
-        if (debug) console.log('FB Graph API found website field:', resolvedSite, 'verifyUrl:', ok);
-        if (ok) return url;
-      }
-      const textR = [rd.about || '', rd.description || ''].join(' ');
-      const mR = textR.match(/https?:\/\/[\S]+|\b[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/);
-      if (mR) {
-        let url = mR[0];
-        if (!/^https?:\/\//.test(url)) url = `https://${url}`;
-        const ok = await verifyUrl(url);
-        if (debug) console.log('FB Graph API about/desc url:', url, 'verifyUrl:', ok);
-        if (ok) return url;
-      }
-      // If we got an id, query the page directly
-      if (rd.id) {
-        const direct = await axios.get(
-          `https://graph.facebook.com/v18.0/${encodeURIComponent(rd.id)}?fields=website,link,about,description&access_token=${encodeURIComponent(token)}`,
-          { timeout: 8000 }
-        );
-        const dd = direct.data || {};
-        if (debug) console.log('FB Graph API id page:', JSON.stringify(dd, null, 2));
-        const site2 = (dd.website || '').trim();
-        if (site2) {
-          const url = /^https?:\/\//.test(site2) ? site2 : `https://${site2}`;
-          const ok = await verifyUrl(url);
-          if (debug) console.log('FB Graph API id page website:', site2, 'verifyUrl:', ok);
-          if (ok) return url;
-        }
-      }
-    } catch (e) { if (debug) console.log('FB Graph API error:', e); }
-    // Fallback: attempt by slug segment
-    const u = new URL(fbUrl);
-    const parts = u.pathname.split('/').filter(Boolean);
-    if (!parts.length) return null;
-    const pageId = parts.find(p => !/pages|posts|events|photos|groups/i.test(p)) || parts[0];
-    const endpoint = `https://graph.facebook.com/v18.0/${pageId}`;
-    const params = `fields=website,link,about,description&access_token=${encodeURIComponent(token)}`;
-    const res = await axios.get(`${endpoint}?${params}`, { timeout: 8000 });
-    const data = res.data || {};
-    if (debug) console.log('FB Graph API slug fallback:', JSON.stringify(data, null, 2));
-    const site = (data.website || '').trim();
-    if (site) {
-      try {
-        const url = /^https?:\/\//.test(site) ? site : `https://${site}`;
-        const ok = await verifyUrl(url);
-        if (debug) console.log('FB Graph API slug page:', site, 'verifyUrl:', ok);
-        if (ok) return url;
-      } catch { }
-    }
-    const text = [data.about || '', data.description || ''].join(' ');
-    const m = text.match(/https?:\/\/[\S]+|\b[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/);
-    if (m) {
-      let url = m[0];
-      if (!/^https?:\/\//.test(url)) url = `https://${url}`;
-      const ok = await verifyUrl(url);
-      if (debug) console.log('FB Graph API slug page about/desc:', url, 'verifyUrl:', ok);
-      if (ok) return url;
-    }
-    return null;
-  } catch (e) { if (debug) console.log('FB Graph API OUTER error:', e); return null; }
-}
-
-async function getFacebookAboutWebsite(fbUrl) {
-  try {
-    const u = new URL(fbUrl);
-    const parts = u.pathname.split('/').filter(Boolean);
-    const slug = parts.find(p => !/pages|posts|events|photos|groups/i.test(p)) || parts[0] || '';
-    if (!slug) return null;
-    const aboutUrl = `https://m.facebook.com/${slug}/about`;
-    const $ = await fetchPage(aboutUrl);
-    if (!$) return null;
-    let candidates = [];
-    $('a[href]').each((_, el) => {
-      const href = ($(el).attr('href') || '').trim();
-      if (!href) return;
-      let link = href.startsWith('/') ? `https://m.facebook.com${href}` : href;
-      try {
-        const x = new URL(link);
-        const h = x.hostname.toLowerCase();
-        if (/facebook\.com|m\.facebook\.com|l\.facebook\.com/.test(h)) {
-          const real = x.searchParams.get('u') || x.searchParams.get('url') || '';
-          if (real) link = decodeURIComponent(real);
-        }
-      } catch { }
-      try {
-        const ext = new URL(/^https?:\/\//.test(link) ? link : `https://${link}`);
-        const host = ext.hostname.toLowerCase();
-        if (/facebook\.com|twitter\.com|x\.com|instagram\.com|linkedin\.com/.test(host)) return;
-        candidates.push(ext.toString());
-      } catch { }
-    });
-    if (!candidates.length) {
-      const bodyText = $('body').text() || '';
-      const m = bodyText.match(/https?:\/\/[^\s]+|\b[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/);
-      if (m) {
-        let url = m[0];
-        if (!/^https?:\/\//.test(url)) url = `https://${url}`;
-        candidates.push(url);
-      }
-    }
-    for (const c of Array.from(new Set(candidates))) {
-      const ok = await verifyUrl(c);
-      if (ok) return c;
-    }
-    return null;
-  } catch { return null; }
-}
-
-async function getInstagramBioWebsite(url) {
-  try {
-    const res = await axios.get(url, { headers: { 'User-Agent': getUA(), 'Accept': 'text/html' }, timeout: 12000, maxRedirects: 5, validateStatus: () => true });
-    const html = typeof res.data === 'string' ? res.data : '';
-    const $ = cheerio.load(html);
-    const anchors = [];
-    $('a[href]').each((_, el) => {
-      const href = ($(el).attr('href') || '').trim();
-      if (!href) return;
-      if (/^\//.test(href)) return;
-      try {
-        const u = new URL(/^https?:\/\//.test(href) ? href : `https://${href}`);
-        const h = u.hostname.toLowerCase();
-        if (/instagram\.com|facebook\.com|twitter\.com|x\.com|linkedin\.com/.test(h)) return;
-        anchors.push(u.toString());
-      } catch { }
-    });
-    const rawBlocks = [$('meta[property="og:description"]').attr('content') || '', $('meta[name="description"]').attr('content') || '', $('body').text() || '', html];
-    $('script').each((_, el) => { const t = $(el).html(); if (t) rawBlocks.push(t); });
-    const raw = rawBlocks.join(' ');
-    const m = raw.match(/https?:\/\/[^\s]+|\b[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/);
-    let cand = m?.[0] || anchors[0] || null;
-    if (!cand) return null;
-    if (!/^https?:\/\//.test(cand)) cand = `https://${cand}`;
-    if (/linktr\.ee|bit\.ly|t\.co/i.test(cand)) {
-      try {
-        const resp = await axios.get(cand, { maxRedirects: 5, timeout: 8000, validateStatus: () => true });
-        const finalUrl = resp.request?.res?.responseUrl || resp.headers?.location || cand;
-        cand = finalUrl;
-      } catch { }
-    }
-    const ok = await verifyUrl(cand);
-    return ok ? cand : null;
-  } catch { return null; }
-}
-
-async function getTwitterBioWebsite(url) {
-  try {
-    const res = await axios.get(url, { headers: { 'User-Agent': getUA(), 'Accept': 'text/html' }, timeout: 12000, maxRedirects: 5, validateStatus: () => true });
-    const html = typeof res.data === 'string' ? res.data : '';
-    const $ = cheerio.load(html);
-    const anchors = [];
-    $('a[href]').each((_, el) => {
-      const href = ($(el).attr('href') || '').trim();
-      if (!href) return;
-      if (/^\//.test(href)) return;
-      try {
-        const u = new URL(/^https?:\/\//.test(href) ? href : `https://${href}`);
-        const h = u.hostname.toLowerCase();
-        if (/twitter\.com|x\.com|facebook\.com|instagram\.com|linkedin\.com/.test(h)) return;
-        anchors.push(u.toString());
-      } catch { }
-    });
-    const rawBlocks = [$('body').text() || '', html];
-    $('script').each((_, el) => { const t = $(el).html(); if (t) rawBlocks.push(t); });
-    const raw = rawBlocks.join(' ');
-    const urlRx = /(https?:\/\/[^\s"'<>]+)|\b([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?:\b)/g;
-    let found = null; let mm;
-    while ((mm = urlRx.exec(raw)) !== null) { found = mm[1] || mm[2]; if (found) break; }
-    let cand = found || anchors[0] || null;
-    if (!cand) return null;
-    if (!/^https?:\/\//.test(cand)) cand = `https://${cand}`;
-    if (/t\.co|bit\.ly|linktr\.ee/i.test(cand)) {
-      try {
-        const resp = await axios.get(cand, { maxRedirects: 5, timeout: 8000, validateStatus: () => true });
-        const finalUrl = resp.request?.res?.responseUrl || resp.headers?.location || cand;
-        cand = finalUrl;
-      } catch { }
-    }
-    const ok = await verifyUrl(cand);
-    return ok ? cand : null;
-  } catch { return null; }
-}
-
-/***********
- * UNUSED/LEGACY/SUPPLEMENT CODE BLOCKS
- ***********/
-
-/*
-// Unused: getLinkedInAboutWebsite
-async function getLinkedInAboutWebsite(url) {
-  try {
-    const u = new URL(url);
-    const parts = u.pathname.split('/').filter(Boolean);
-    const slugIdx = parts.indexOf('company') >= 0 ? parts.indexOf('company') + 1 : (parts[0] ? 1 : 0);
-    const slug = parts[slugIdx] || parts[0] || '';
-    if (!slug) return null;
-    const aboutUrl = `https://www.linkedin.com/company/${slug}/about/`;
-    const $ = await fetchPage(aboutUrl);
-    if (!$) return null;
-    const candidates = [];
-    $('a[href]').each((_, el) => {
-      const href = ($(el).attr('href') || '').trim();
-      if (!href) return;
-      let link = href.startsWith('/') ? `https://www.linkedin.com${href}` : href;
-      try {
-        const x = new URL(/^https?:\/\//.test(link) ? link : `https://${link}`);
-        const h = x.hostname.toLowerCase();
-        if (/linkedin\.com/.test(h)) return;
-        candidates.push(x.toString());
-      } catch { }
-    });
-    if (!candidates.length) {
-      const text = $('body').text() || '';
-      const m = text.match(/https?:\/\/[^\s]+|\b[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/);
-      if (m) {
-        let cand = m[0];
-        if (!/^https?:\/\//.test(cand)) cand = `https://${cand}`;
-        candidates.push(cand);
-      }
-    }
-    for (const c of Array.from(new Set(candidates))) {
-      const ok = await verifyUrl(c);
-      if (ok) return c;
-    }
-    return null;
-  } catch { return null; }
-}
-*/
-
-/*
-// Unused: findOutletSocialPages
-async function findOutletSocialPages(outletName, hintHostname = null) {
-  const base = outletName.replace(/\s+/g, ' ').trim();
-  const quoted = `"${base}"`;
-  const queries = [
-    `${quoted} site:facebook.com`,
-    `${quoted} site:twitter.com`,
-    `${quoted} site:x.com`,
-    `${quoted} site:instagram.com`,
-    `${quoted} site:linkedin.com/company`,
-    `${quoted} site:linkedin.com`,
-    `${base} official facebook`,
-    `${base} official twitter`,
-    `${base} official instagram`,
-    `${base} official linkedin`
-  ];
-  if (hintHostname) {
-    const hostKey = hintHostname.replace(/^www\./, '').split('.')[0];
-    queries.push(`"${hostKey}" site:facebook.com`);
-    queries.push(`"${hostKey}" site:twitter.com`);
-    queries.push(`"${hostKey}" site:instagram.com`);
-    queries.push(`"${hostKey}" site:linkedin.com`);
-  }
-  const results = [];
-  for (const q of queries) {
-    const rs = await serperSearch(q, 8);
-    for (const r of rs) {
-      const link = r.link || '';
-      if (!link) continue;
-      if (/twitter\.com|x\.com|facebook\.com|instagram\.com|linkedin\.com/i.test(link)) {
-        results.push(link);
-      }
-    }
-  }
-  if (!results.length) {
-    const ddgSites = ['facebook.com', 'twitter.com', 'x.com', 'instagram.com', 'linkedin.com'];
-    for (const site of ddgSites) {
-      const q = `${quoted} site:${site}`;
-      try {
-        const rs = await ddgHtmlSearch(q, 10);
-        for (const r of rs) {
-          const link = r.link || '';
-          if (/facebook\.com|twitter\.com|x\.com|instagram\.com|linkedin\.com/i.test(link)) results.push(link);
-        }
-      } catch { }
-    }
-  }
-  const dedup = Array.from(new Set(results));
-  const pages = [];
-  for (const url of dedup) {
-    let platform = null;
-    if (/facebook\.com/i.test(url)) platform = 'Facebook';
-    else if (/twitter\.com|x\.com/i.test(url)) platform = 'Twitter';
-    else if (/instagram\.com/i.test(url)) platform = 'Instagram';
-    else if (/linkedin\.com/i.test(url)) platform = 'LinkedIn';
-    if (platform) pages.push({ url, platform });
-  }
-  // Priority order: Facebook > Twitter/X > Instagram > LinkedIn
-  const order = { Facebook: 1, Twitter: 2, Instagram: 3, LinkedIn: 4 };
-  pages.sort((a, b) => (order[a.platform] || 99) - (order[b.platform] || 99));
-  return pages.slice(0, 12);
-}
-*/
-
-/*
-// Unused: extractSocialLinksFromSite
-async function extractSocialLinksFromSite(website) {
-  const links = [];
-  try {
-    const $ = await fetchPage(website);
-    if ($) {
-      $('a[href]').each((_, el) => {
-        const href = ($(el).attr('href') || '').trim();
-        if (!href) return;
-        const url = href.startsWith('/') ? `${website}${href}` : href;
-        if (/facebook\.com|twitter\.com|x\.com|instagram\.com|linkedin\.com/i.test(url)) {
-          let platform = null;
-          if (/facebook\.com/i.test(url)) platform = 'Facebook';
-          else if (/twitter\.com|x\.com/i.test(url)) platform = 'Twitter';
-          else if (/instagram\.com/i.test(url)) platform = 'Instagram';
-          else if (/linkedin\.com/i.test(url)) platform = 'LinkedIn';
-          links.push({ url, platform });
-        }
-      });
-    }
-  } catch { }
-  const seen = new Set();
-  const out = [];
-  for (const l of links) {
-    const key = `${l.platform}:${l.url}`;
-    if (!seen.has(key)) { seen.add(key); out.push(l); }
-  }
-  const order = { Facebook: 1, Twitter: 2, Instagram: 3, LinkedIn: 4 };
-  out.sort((a, b) => (order[a.platform] || 99) - (order[b.platform] || 99));
-  return out;
-}
-*/
-
-/*
-// Unused: collectSupplementaryPages
-async function collectSupplementaryPages(outletName, queries, excludeUrl = null) {
-  let links = [];
-  for (const q of queries) {
-    try {
-      const rs = await serperSearch(q, 10);
-      for (const r of rs) { if (r.link) links.push(r.link); }
-    } catch { }
-  }
-  let dedup = Array.from(new Set(links));
-  // Exclude the selected Google candidate host if provided
-  try {
-    if (excludeUrl) {
-      const exHost = new URL(excludeUrl).hostname.replace(/^www\./, '').toLowerCase();
-      dedup = dedup.filter(l => {
-        try { return new URL(l).hostname.replace(/^www\./, '').toLowerCase() !== exHost; } catch { return true; }
-      });
-    }
-  } catch { }
-  // Keep only links likely related to the outlet (slug/path) or known profile/portfolio hosts
-  const outletKey = outletName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, '');
-  const allowHosts = /(facebook\.com|instagram\.com|twitter\.com|x\.com|linkedin\.com|muckrack\.com|about\.me|shutterstock\.com)/i;
-  const rejectHosts = /(doubleclick\.net|cloudflareinsights\.com|captcha-delivery\.com|datado\.me|whatsapp\.com|google\.com|gstatic\.com|youtube\.com|w3\.org|kfc\.co\.th)/i;
-  dedup = dedup.filter(l => {
-    try {
-      const u = new URL(l);
-      const host = u.hostname.replace(/^www\./, '').toLowerCase();
-      const path = `${u.pathname}${u.search}`.toLowerCase();
-      if (rejectHosts.test(host)) return false;
-      return allowHosts.test(host) || path.includes(outletKey) || host.includes(outletKey);
-    } catch { return false; }
-  });
-  if (!dedup.length) {
-    const sites = ['instagram.com', 'twitter.com', 'x.com', 'linkedin.com'];
-    for (const site of sites) {
-      try {
-        const rs = await ddgHtmlSearch(`${outletName} site:${site}`, 10);
-        for (const r of rs) { if (r.link) links.push(r.link); }
-      } catch { }
-    }
-    dedup = Array.from(new Set(links));
-    dedup = dedup.filter(l => {
-      try {
-        const u = new URL(l);
-        const host = u.hostname.replace(/^www\./, '').toLowerCase();
-        const path = `${u.pathname}${u.search}`.toLowerCase();
-        if (rejectHosts.test(host)) return false;
-        return allowHosts.test(host) || path.includes(outletKey) || host.includes(outletKey);
-      } catch { return false; }
-    });
-  }
-  return dedup.slice(0, 12);
-}
-*/
-
-/*
-// Unused: assessActivity
-async function assessActivity(website) {
-  try {
-    const $ = await fetchPage(website);
-    if (!$) return 'Unknown';
-    const t = $('body').text().toLowerCase();
-    if (/2025|2024/.test(t)) return 'Active';
-    if (/2023/.test(t)) return 'Low Activity';
-    return 'Unknown';
-  } catch { return 'Unknown'; }
-}
-*/
-
-/*
-// Unused: detectOfficialWebsiteWithReport
-async function detectOfficialWebsiteWithReport(outletName) {
-  const rejected = [];
-  let selected = null;
-  let source = null;
-  const socialPages = await findOutletSocialPages(outletName);
-  for (const sp of socialPages) {
-    const site = await extractWebsiteFromSocialBio(sp.url);
-    if (!site) continue;
-    try {
-      const u = new URL(site);
-      const rej = isPlatformRejected(u.hostname);
-      if (rej) { rejected.push({ url: site, reason: rej }); continue; }
-      const val = await validateNewsroomStructure(site);
-      if (!val.ok) { rejected.push({ url: site, reason: val.reason }); continue; }
-      selected = site;
-      source = sp.platform;
-      break;
-    } catch { rejected.push({ url: site, reason: 'Invalid URL' }); }
-  }
-  if (!selected) {
-    const queries = [
-      `${outletName} official website`,
-      `${outletName} news`,
-      `${outletName} media`,
-      `${outletName} newspaper`,
-      `"${outletName}" official`
-    ];
-    const google = await runSerperTier(queries, outletName);
-    if (google) {
-      try {
-        const u = new URL(google);
-        const rej = isPlatformRejected(u.hostname);
-        if (rej) { rejected.push({ url: google, reason: rej }); }
-        else {
-          const val = await validateNewsroomStructure(google);
-          if (!val.ok) { rejected.push({ url: google, reason: val.reason }); }
-          else { selected = google; source = 'Google'; }
-        }
-      } catch { rejected.push({ url: google, reason: 'Invalid URL' }); }
-    }
-  }
-  const official = selected || 'Unverified';
-  const activity = official !== 'Unverified' ? await assessActivity(official) : 'Unknown';
-  console.log(`Official Website: ${official}`);
-  console.log(`Source of Detection: ${source || 'None'}`);
-  console.log(`Reason for Selection: ${official !== 'Unverified' ? (source === 'Google' ? 'Search result passed newsroom validation' : 'Found in official social bio and passed validation') : 'No candidate met criteria'}`);
-  if (rejected.length) {
-    for (const r of rejected.slice(0, 6)) { console.log(`Rejected: ${r.url} – ${r.reason}`); }
-  } else {
-    console.log(`Rejected: None`);
-  }
-  console.log(`Activity Status: ${activity}`);
-  return { official, source, rejected, activity };
-}
-*/
-
-/*
-// Unused: extractUrlsFromText
-function extractUrlsFromText(raw, pageHost) {
-  const urls = new Set();
-  const rx = /(https?:\/\/[^\s"'<>]+)|\b(www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
-  let m;
-  while ((m = rx.exec(raw)) !== null) {
-    let cand = (m[1] || m[2] || '').trim();
-    if (!cand) continue;
-    if (!/^https?:\/\//.test(cand)) cand = `https://${cand}`;
-    try {
-      const u = new URL(cand);
-      const h = u.hostname.replace(/^www\./, '').toLowerCase();
-      if (h === pageHost) continue;
-      if (/facebook\.com|instagram\.com|twitter\.com|x\.com|linkedin\.com|doubleclick\.net|cloudflareinsights\.com|gstatic\.com|google\.com/.test(h)) continue;
-      urls.add(u.toString());
-    } catch { }
-  }
-  return Array.from(urls);
-}
-*/
-
-async function getShutterstockWebsite(url) {
-  try {
-    const res = await axios.get(url, { headers: { 'User-Agent': getUA(), 'Accept': 'text/html' }, timeout: 12000, maxRedirects: 5, validateStatus: () => true });
-    const html = typeof res.data === 'string' ? res.data : '';
-    const $ = cheerio.load(html);
-    const candidates = [];
-    $('a[href]').each((_, el) => {
-      const href = ($(el).attr('href') || '').trim();
-      if (!href) return;
-      if (/^\//.test(href)) return;
-      try {
-        const u = new URL(/^https?:\/\//.test(href) ? href : `https://${href}`);
-        const h = u.hostname.toLowerCase();
-        if (/shutterstock\.com/.test(h)) return;
-        candidates.push(u.toString());
-      } catch { }
-    });
-    // Look for explicit www.* domain mentions in raw HTML/text
-    const raw = $('body').text() + ' ' + html;
-    const urlRx = /(https?:\/\/[^\s]+)|\b(www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
-    let mm;
-    while ((mm = urlRx.exec(raw)) !== null) {
-      let cand = (mm[1] || mm[2] || '').trim();
-      if (!cand) continue;
-      if (!/^https?:\/\//.test(cand)) cand = `https://${cand}`;
-      try {
-        const u = new URL(cand);
-        const h = u.hostname.toLowerCase();
-        if (/shutterstock\.com|instagram\.com|twitter\.com|x\.com|linkedin\.com/.test(h)) continue;
-        candidates.push(u.toString());
-      } catch { }
-    }
-    if (!candidates.length) return null;
-    for (const c of Array.from(new Set(candidates))) {
-      const ok = await verifyUrl(c);
-      if (ok) return c;
-    }
-    return null;
-  } catch { return null; }
-}
-
-/* UNUSED: findOutletSocialPages
-async function findOutletSocialPages(outletName, hintHostname = null) {
-  const base = outletName.replace(/\s+/g, ' ').trim();
-  const quoted = `"${base}"`;
-  const queries = [
-    `${quoted} site:facebook.com`,
-    `${quoted} site:twitter.com`,
-    `${quoted} site:x.com`,
-    `${quoted} site:instagram.com`,
-    `${quoted} site:linkedin.com/company`,
-    `${quoted} site:linkedin.com`,
-    `${base} official facebook`,
-    `${base} official twitter`,
-    `${base} official instagram`,
-    `${base} official linkedin`
-  ];
-  if (hintHostname) {
-    const hostKey = hintHostname.replace(/^www\./, '').split('.')[0];
-    queries.push(`"${hostKey}" site:facebook.com`);
-    queries.push(`"${hostKey}" site:twitter.com`);
-    queries.push(`"${hostKey}" site:instagram.com`);
-    queries.push(`"${hostKey}" site:linkedin.com`);
-  }
-  const results = [];
-  for (const q of queries) {
-    const rs = await serperSearch(q, 8);
-    for (const r of rs) {
-      const link = r.link || '';
-      if (!link) continue;
-      if (/twitter\.com|x\.com|facebook\.com|instagram\.com|linkedin\.com/i.test(link)) {
-        results.push(link);
-      }
-    }
-  }
-  if (!results.length) {
-    const ddgSites = ['facebook.com', 'twitter.com', 'x.com', 'instagram.com', 'linkedin.com'];
-    for (const site of ddgSites) {
-      const q = `${quoted} site:${site}`;
-      try {
-        const rs = await ddgHtmlSearch(q, 10);
-        for (const r of rs) {
-          const link = r.link || '';
-          if (/facebook\.com|twitter\.com|x\.com|instagram\.com|linkedin\.com/i.test(link)) results.push(link);
-        }
-      } catch { }
-    }
-  }
-  const dedup = Array.from(new Set(results));
-  const pages = [];
-  for (const url of dedup) {
-    let platform = null;
-    if (/facebook\.com/i.test(url)) platform = 'Facebook';
-    else if (/twitter\.com|x\.com/i.test(url)) platform = 'Twitter';
-    else if (/instagram\.com/i.test(url)) platform = 'Instagram';
-    else if (/linkedin\.com/i.test(url)) platform = 'LinkedIn';
-    if (platform) pages.push({ url, platform });
-  }
-  // Priority order: Facebook > Twitter/X > Instagram > LinkedIn
-  const order = { Facebook: 1, Twitter: 2, Instagram: 3, LinkedIn: 4 };
-  pages.sort((a, b) => (order[a.platform] || 99) - (order[b.platform] || 99));
-  return pages.slice(0, 12);
-}
-*/
-
-/* UNUSED: extractSocialLinksFromSite
-async function extractSocialLinksFromSite(website) {
-  const links = [];
-  try {
-    const $ = await fetchPage(website);
-    if ($) {
-      $('a[href]').each((_, el) => {
-        const href = ($(el).attr('href') || '').trim();
-        if (!href) return;
-        const url = href.startsWith('/') ? `${website}${href}` : href;
-        if (/facebook\.com|twitter\.com|x\.com|instagram\.com|linkedin\.com/i.test(url)) {
-          let platform = null;
-          if (/facebook\.com/i.test(url)) platform = 'Facebook';
-          else if (/twitter\.com|x\.com/i.test(url)) platform = 'Twitter';
-          else if (/instagram\.com/i.test(url)) platform = 'Instagram';
-          else if (/linkedin\.com/i.test(url)) platform = 'LinkedIn';
-          links.push({ url, platform });
-        }
-      });
-    }
-  } catch { }
-  const seen = new Set();
-  const out = [];
-  for (const l of links) {
-    const key = `${l.platform}:${l.url}`;
-    if (!seen.has(key)) { seen.add(key); out.push(l); }
-  }
-  const order = { Facebook: 1, Twitter: 2, Instagram: 3, LinkedIn: 4 };
-  out.sort((a, b) => (order[a.platform] || 99) - (order[b.platform] || 99));
-  return out;
-}
-*/
 
 function isPlatformRejected(hostname) {
   const h = hostname.toLowerCase();
@@ -1676,8 +661,8 @@ async function validateNewsroomStructure(website) {
       $('body').text().substring(0, 2000)
     ].join(' ').toLowerCase();
     const sections = [
-      'news','opinion','technology','business','sports','international','entertainment','books','advertorials',
-      'music','art','culture','style','politics','features','lifestyle','video','videos','podcast','africa'
+      'news', 'opinion', 'technology', 'business', 'sports', 'international', 'entertainment', 'books', 'advertorials',
+      'music', 'art', 'culture', 'style', 'politics', 'features', 'lifestyle', 'video', 'videos', 'podcast', 'africa'
     ];
     let count = 0;
     const found = new Set();
@@ -1872,222 +857,6 @@ async function bruteForceByTLD(outletName, tld) {
   return null;
 }
 
-/* UNUSED: collectSupplementaryPages
-async function collectSupplementaryPages(outletName, queries, excludeUrl = null) {
-  let links = [];
-  for (const q of queries) {
-    try {
-      const rs = await serperSearch(q, 10);
-      for (const r of rs) { if (r.link) links.push(r.link); }
-    } catch { }
-  }
-  let dedup = Array.from(new Set(links));
-  // Exclude the selected Google candidate host if provided
-  try {
-    if (excludeUrl) {
-      const exHost = new URL(excludeUrl).hostname.replace(/^www\./, '').toLowerCase();
-      dedup = dedup.filter(l => {
-        try { return new URL(l).hostname.replace(/^www\./, '').toLowerCase() !== exHost; } catch { return true; }
-      });
-    }
-  } catch { }
-  // Keep only links likely related to the outlet (slug/path) or known profile/portfolio hosts
-  const outletKey = outletName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, '');
-  const allowHosts = /(facebook\.com|instagram\.com|twitter\.com|x\.com|linkedin\.com|muckrack\.com|about\.me|shutterstock\.com)/i;
-  const rejectHosts = /(doubleclick\.net|cloudflareinsights\.com|captcha-delivery\.com|datado\.me|whatsapp\.com|google\.com|gstatic\.com|youtube\.com|w3\.org|kfc\.co\.th)/i;
-  dedup = dedup.filter(l => {
-    try {
-      const u = new URL(l);
-      const host = u.hostname.replace(/^www\./, '').toLowerCase();
-      const path = `${u.pathname}${u.search}`.toLowerCase();
-      if (rejectHosts.test(host)) return false;
-      return allowHosts.test(host) || path.includes(outletKey) || host.includes(outletKey);
-    } catch { return false; }
-  });
-  if (!dedup.length) {
-    const sites = ['instagram.com', 'twitter.com', 'x.com', 'linkedin.com'];
-    for (const site of sites) {
-      try {
-        const rs = await ddgHtmlSearch(`${outletName} site:${site}`, 10);
-        for (const r of rs) { if (r.link) links.push(r.link); }
-      } catch { }
-    }
-    dedup = Array.from(new Set(links));
-    dedup = dedup.filter(l => {
-      try {
-        const u = new URL(l);
-        const host = u.hostname.replace(/^www\./, '').toLowerCase();
-        const path = `${u.pathname}${u.search}`.toLowerCase();
-        if (rejectHosts.test(host)) return false;
-        return allowHosts.test(host) || path.includes(outletKey) || host.includes(outletKey);
-      } catch { return false; }
-    });
-  }
-  return dedup.slice(0, 12);
-}
-*/
-
-const KNOWN_BLOCKED_HOSTS = [
-  'doubleclick.net', 'captcha-delivery.com', 'googletagmanager.com',
-  'ct.captcha-delivery.com', 'cloudflare.com', 'akamaitechnologies.com',
-  'gstatic.com', 'amazonaws.com', 'google-analytics.com',
-  'googleapis.com', 'recaptcha.net', 'fonts.googleapis.com',
-  'youtube.com', 'youtube-nocookie.com', 'whatsapp.com', 'datado.me'
-];
-function isBlockedInfraHost(host) {
-  const h = host.toLowerCase().replace(/^www\./, '');
-  return KNOWN_BLOCKED_HOSTS.some(blocked => h === blocked || h.endsWith('.' + blocked));
-}
-
-async function getExternalWebsiteFromPage(url, outletName = '') {
-  const debug = !!process.env.DEBUG_FB_SITE_DETECT;
-  try {
-    const pageHost = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
-    if (/facebook\.com/i.test(pageHost)) {
-      const fbGraph = await getFacebookPageWebsiteViaGraph(url);
-      const fb = fbGraph || await getFacebookAboutWebsite(url);
-      if (fb) return fb;
-    }
-    if (/instagram\.com/i.test(pageHost)) {
-      const ig = await getInstagramBioWebsite(url);
-      if (ig) return ig;
-    }
-    if (/twitter\.com|x\.com/i.test(pageHost)) {
-      const tw = await getTwitterBioWebsite(url);
-      if (tw) return tw;
-    }
-    if (/muckrack\.com/i.test(pageHost)) {
-      const mr = await extractWebsiteFromSocialBio(url);
-      if (mr) return mr;
-    }
-    if (/shutterstock\.com/i.test(pageHost)) {
-      const ss = await getShutterstockWebsite(url);
-      if (ss) return ss;
-    }
-    const res = await axios.get(url, { headers: { 'User-Agent': getUA(), 'Accept': 'text/html' }, timeout: 12000, maxRedirects: 5, validateStatus: () => true });
-    const html = typeof res.data === 'string' ? res.data : '';
-    const $ = cheerio.load(html);
-    const cset = new Set();
-
-    // Phase 1: Add all anchor and about/bio meta/blocks separately
-    $('a[href]').each((_, el) => {
-      const href = ($(el).attr('href') || '').trim();
-      if (!href) return;
-      try {
-        // Look for u=... or url=... in attributes
-        const uMatch = href.match(/(?:u|url)=([^&#]+)/);
-        if (uMatch) {
-          let uCand = decodeURIComponent(uMatch[1]);
-          if (!/^https?:\/\//.test(uCand)) uCand = 'https://' + uCand;
-          cset.add(uCand);
-          if (debug) console.log(`[LINK_UNWRAP] from anchor: Added redirect param: ${uCand}`);
-        }
-        let u = new URL(/^https?:\/\//.test(href) ? href : `https://${href}`);
-        let h = u.hostname.replace(/^www\./, '').toLowerCase();
-        if (/l\.facebook\.com/.test(h)) {
-          const real = u.searchParams.get('u') || u.searchParams.get('url') || '';
-          if (real) {
-            try { let r = decodeURIComponent(real); if (!/^https?:\/\//.test(r)) r = 'https://' + r; cset.add(r); if (debug) console.log(`[LINK_UNWRAP] from l.facebook.com: Added decoded: ${r}`); } catch { }
-          }
-        }
-        if (h !== pageHost) {
-          cset.add(u.toString());
-        }
-      } catch { }
-    });
-
-    // Phase 2: Greedy explicit bio/about selectors
-    const bioAboutBlocks = [];
-    const bioSelectors = [
-      '.about', '.bio', '[role=bio]', '[itemprop="description"]', '.profile-bio', '.author-about', '.author-description', '.profile-bio__text',
-      '.description', '.profile__bio'
-    ];
-    for (const sel of bioSelectors) {
-      $(sel).each((_, el) => {
-        const txt = $(el).text().trim();
-        if (txt && txt.length > 3) bioAboutBlocks.push(txt);
-      });
-    }
-    $("div,h1,h2,h3,h4,h5").each((_, el) => {
-      const c = $(el).attr("class") || '';
-      if (/about|bio/i.test(c)) {
-        const t = $(el).text().trim();
-        if (t && t.length > 3) bioAboutBlocks.push(t);
-      }
-    });
-    let prioritizedSet = new Set();
-    for (const txt of bioAboutBlocks) {
-      for (const u of extractAllPotentialUrlsFromText(txt, 'about/bio')) prioritizedSet.add(u);
-    }
-
-    // Phase 3: All other text/meta/script
-    const rawBlocks = [
-      $('meta[property="og:description"]').attr('content') || '',
-      $('meta[name="description"]').attr('content') || '',
-      $('title').text() || '',
-      $('body').text() || '',
-      html
-    ];
-    $('script').each((_, el) => { const t = $(el).html(); if (t) rawBlocks.push(t); });
-    for (const raw of rawBlocks) {
-      for (const u of extractAllPotentialUrlsFromText(raw, 'main')) cset.add(u);
-    }
-
-    // Expand shorteners
-    for (const c of Array.from(cset)) {
-      if (/linktr\.ee|bit\.ly|t\.co/i.test(c)) {
-        try {
-          const resp = await axios.get(c, { maxRedirects: 5, timeout: 8000, validateStatus: () => true });
-          const finalUrl = resp.request?.res?.responseUrl || resp.headers?.location || c;
-          if (finalUrl && /^https?:\/\//.test(finalUrl)) cset.add(finalUrl);
-        } catch { }
-      }
-    }
-
-    // Prioritize about/bio above generic
-    const candidates = Array.from(prioritizedSet).concat(Array.from(cset));
-    const outletSlug = outletName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    for (const c of candidates) {
-      try {
-        const u = new URL(c);
-        const lcHost = u.hostname.toLowerCase();
-        if (isBlockedInfraHost(lcHost)) { if (debug) console.log(`[REJECT] ${c} blocked by infra host list`); continue; }
-        if (/facebook|instagram|twitter|x\.com|linkedin|blogspot|wordpress|medium|about\.me|muckrack|shutterstock/.test(lcHost)) continue;
-        // 1: Host contains outlet slug, or path contains it
-        if (
-          (outletSlug && (lcHost.replace(/^www\./, '').replace(/-/g, '').includes(outletSlug) || c.toLowerCase().includes(outletSlug)))
-        ) {
-          if (await verifyUrl(c)) { if (debug) console.log(`[DETECT_SITE] Accepted (slug match, prioritized): ${c}`); return c; }
-          else { if (debug) console.log(`[REJECT] ${c} Verification failed (slug match, prioritized)`); }
-        }
-      } catch (e) { if (debug) console.log(`[REJECT] ${c} Error parsing candidate of slug match (prioritized):`, e); }
-    }
-    for (const c of candidates) {
-      try {
-        const u = new URL(c);
-        const lcHost = u.hostname.toLowerCase();
-        if (isBlockedInfraHost(lcHost)) { if (debug) console.log(`[REJECT] ${c} blocked by infra host list`); continue; }
-        if (/facebook|instagram|twitter|x\.com|linkedin|blogspot|wordpress|medium|about\.me|muckrack|shutterstock/.test(lcHost)) continue;
-        if (/\.co\.za$|\.co\.in$|\.com$|\.net$|\.org$|\.ng$|\.ke$|\.pk$|\.za$|\.africa$/.test(lcHost)) {
-          if (await verifyUrl(c)) { if (debug) console.log(`[DETECT_SITE] Accepted (news ccTLD): ${c}`); return c; }
-          else { if (debug) console.log(`[REJECT] ${c} Verification failed (news ccTLD)`); }
-        }
-      } catch (e) { if (debug) console.log(`[REJECT] ${c} Error parsing candidate of news ccTLD:`, e); }
-    }
-    for (const c of candidates) {
-      try {
-        const u = new URL(c);
-        const lcHost = u.hostname.toLowerCase();
-        if (isBlockedInfraHost(lcHost)) { if (debug) console.log(`[REJECT] ${c} blocked by infra host list`); continue; }
-        if (/facebook|instagram|twitter|x\.com|linkedin|blogspot|wordpress|medium|about\.me|muckrack|shutterstock/.test(lcHost)) continue;
-        if (await verifyUrl(c)) { if (debug) console.log(`[DETECT_SITE] Accepted (fallback live): ${c}`); return c; }
-        else { if (debug) console.log(`[REJECT] ${c} Verification failed (fallback live)`); }
-      } catch (e) { if (debug) console.log(`[REJECT] ${c} Error parsing candidate (fallback live):`, e); }
-    }
-    return null;
-  } catch { return null; }
-}
-
 async function inferOutletCountry(website) {
   try {
     const host = new URL(website).hostname.toLowerCase();
@@ -2221,102 +990,26 @@ async function collectArticles(website, target = 350) {
 
   console.log(`  RSS collected: ${articles.size}`);
 
-  // STEP 2: AUTO-DETECT SECTIONS FROM NAVBAR/FOOTER/INTERNAL LINKS (dynamic)
-  const sectionUrls = new Set([website]);
+  // STEP 2: AUTO-DETECT SECTIONS FROM NAVBAR/FOOTER/INTERNAL LINKS
+  const sectionUrls = new Set([
+    website,
+    `${website}/news`, `${website}/world`,
+    `${website}/business`, `${website}/opinion`, `${website}/sports`,
+    `${website}/entertainment`, `${website}/tech`, `${website}/politics`
+  ]);
 
   try {
     const $ = await fetchPage(website);
     if ($) {
-      const addSection = (url) => {
-        try {
-          const u = new URL(url.startsWith('/') ? `${website}${url}` : url);
-          if (!u.hostname.includes(host)) return;
-          const clean = u.toString().split('?')[0].replace(/#.*$/, '');
-          sectionUrls.add(clean);
-        } catch { }
-      };
       $('header a[href], nav a[href], footer a[href], a[href]').each((_, el) => {
-        const href = ($(el).attr('href') || '').trim();
+        const href = $(el).attr('href');
         if (!href) return;
-        const text = ($(el).text() || '').trim().toLowerCase();
-        if (/^mailto:|^tel:/i.test(href)) return;
-        const full = href.startsWith('/') ? `${website}${href}` : href;
-        try {
-          const u = new URL(full);
-          if (!u.hostname.includes(new URL(website).hostname)) return;
-          const path = u.pathname;
-          const depth = path.split('/').filter(Boolean).length;
-          const shortLabel = text && text.length <= 30;
-          if (/\/category\//i.test(path)) addSection(u.toString());
-          if (depth <= 2 && shortLabel && !/\d{4}/.test(path)) addSection(u.toString());
-          if (/\/(news|world|business|sport|sports|opinion|tech|politics|entertainment|lifestyle|education|health|science|features|culture|africa)\b/i.test(path)) addSection(u.toString());
-        } catch { }
-      });
-    }
-  } catch { }
 
-  try {
-    const wpCats = await axios.get(`${website.replace(/\/$/, '')}/wp-json/wp/v2/categories?per_page=100`, { timeout: 8000, headers: { 'User-Agent': getUA() }, validateStatus: s => s < 500 });
-    if (Array.isArray(wpCats.data)) {
-      for (const c of wpCats.data) {
-        const slug = (c.slug || '').toString();
-        if (slug) sectionUrls.add(`${website.replace(/\/$/, '')}/category/${slug}/`);
-      }
-    }
-  } catch { }
-
-  try {
-    const smUrls = [`${website.replace(/\/$/, '')}/sitemap_index.xml`, `${website.replace(/\/$/, '')}/sitemap.xml`];
-    for (const sm of smUrls) {
-      if (articles.size >= target) break;
-      try {
-        const res = await axios.get(sm, { timeout: 8000, headers: { 'User-Agent': getUA() } });
-        const $ = cheerio.load(res.data, { xmlMode: true });
-        const locs = [];
-        $('loc').each((_, el) => { const loc = ($(el).text() || '').trim(); if (loc) locs.push(loc); });
-        for (const loc of locs.slice(0, 200)) {
-          try {
-            const u = new URL(loc);
-            if (!u.hostname.includes(new URL(website).hostname)) continue;
-            const path = u.pathname;
-            const depth = path.split('/').filter(Boolean).length;
-            const isWpPostSm = /wp\-sitemap\-posts/i.test(path) || /post\-sitemap/i.test(path) || /sitemap\-posts/i.test(path);
-            if (isWpPostSm) {
-              try {
-                const r2 = await axios.get(u.toString(), { timeout: 8000, headers: { 'User-Agent': getUA() } });
-                const $$ = cheerio.load(r2.data, { xmlMode: true });
-                $$('loc').each((_, el2) => {
-                  if (articles.size >= target) return false;
-                  const l2 = ($$(el2).text() || '').trim();
-                  if (!l2) return;
-                  try {
-                    const u2 = new URL(l2);
-                    if (!u2.hostname.includes(new URL(website).hostname)) return;
-                    const p2 = u2.pathname;
-                    if (/\/(tag|category|author|profile|search|archive|topic|section)\//i.test(l2)) return;
-                    if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(l2)) return;
-                    const titleGuess = u2.pathname.split('/').filter(Boolean).slice(-1)[0]?.replace(/[-_]/g, ' ') || '';
-                    if (!articles.has(u2.toString())) {
-                      articles.set(u2.toString(), { title: titleGuess || 'Article', url: u2.toString() });
-                    }
-                  } catch {}
-                });
-              } catch {}
-              continue;
-            }
-            if (/\/category\//i.test(path) || (depth <= 2 && !/\d{4}/.test(path))) {
-              sectionUrls.add(u.toString());
-            } else {
-              if (!/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(path)) {
-                const titleGuess = path.split('/').filter(Boolean).slice(-1)[0]?.replace(/[-_]/g, ' ') || '';
-                if (!articles.has(u.toString())) {
-                  articles.set(u.toString(), { title: titleGuess || 'Article', url: u.toString() });
-                }
-              }
-            }
-          } catch { }
+        if (/\/(news|world|business|sports|opinion|tech|politics|entertainment|lifestyle|cities|education|health|science)\b/i.test(href)) {
+          let sec = href.startsWith('/') ? `${website}${href}` : href;
+          if (sec.includes(host)) sectionUrls.add(sec.split('?')[0]);
         }
-      } catch { }
+      });
     }
   } catch { }
 
@@ -2331,12 +1024,23 @@ async function collectArticles(website, target = 350) {
     for (let page = 1; page <= 20; page++) {
       if (articles.size >= target) break;
 
-      const pageUrl = page === 1
-        ? section
-        : `${section}?page=${page}`;
-      const altPageUrl = `${section}/page/${page}`;
+      const candidates = [];
+      if (page === 1) {
+        candidates.push(section);
+      } else {
+        candidates.push(`${section}?page=${page}`);
+        candidates.push(`${section}/page/${page}`);
+        candidates.push(`${section}?paged=${page}`);
+        candidates.push(`${section}?pageno=${page}`);
+        candidates.push(`${section}?pagenum=${page}`);
+        candidates.push(`${section}?pg=${page}`);
+      }
 
-      const $ = await fetchPage(page === 1 ? pageUrl : (page % 2 === 0 ? pageUrl : altPageUrl));
+      let $ = null;
+      for (const u of candidates) {
+        $ = await fetchPage(u);
+        if ($) break;
+      }
       if (!$) break;
 
       const before = articles.size;
@@ -2361,12 +1065,11 @@ async function collectArticles(website, target = 350) {
 
         const isArticle =
           /\/\d{4}\//.test(url) ||
+          /\/\d{4}\/\d{2}\/\d{2}\//.test(url) ||
           /\.(html|cms)$/.test(url) ||
           /article|story|news/.test(url) ||
           /\d{6,}/.test(url) ||
-          /articleshow|newsshow/.test(url) ||
-          $(el).closest('article, .post, .entry, .post-card, .card-post, .article').length > 0 ||
-          $(el).closest('.entry-title, .post-title, h2, h3').length > 0;
+          /articleshow|newsshow/.test(url);
 
         if (isArticle && !articles.has(url)) {
           articles.set(url, { title, url });
@@ -2377,29 +1080,70 @@ async function collectArticles(website, target = 350) {
     }
   }
 
-  console.log(`  Total collected: ${articles.size}`);
-  if (articles.size < target) {
+  if (articles.size < Math.min(50, target)) {
+    const sitemapCandidates = [
+      `${website}/sitemap_index.xml`,
+      `${website}/sitemap.xml`,
+      `${website}/wp-sitemap.xml`
+    ];
+    for (const sm of sitemapCandidates) {
+      if (articles.size >= target) break;
+      try {
+        const res = await axios.get(sm, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
+        const $ = cheerio.load(res.data, { xmlMode: true });
+        $('loc').each((_, el) => {
+          if (articles.size >= target) return false;
+          const loc = $(el).text().trim();
+          if (!loc || !loc.includes(host)) return;
+          if (/\/(tag|category|author|search|archive|topic|section|video|photo|gallery)\b/i.test(loc)) return;
+          if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(loc)) return;
+          const isArticle =
+            /\/\d{4}\//.test(loc) ||
+            /\/\d{4}\/\d{2}\/\d{2}\//.test(loc) ||
+            /\.(html|cms)$/.test(loc) ||
+            /article|story|news/.test(loc) ||
+            /\d{6,}/.test(loc) ||
+            /articleshow|newsshow/.test(loc);
+          if (isArticle && !articles.has(loc)) {
+            articles.set(loc, { title: '', url: loc });
+          }
+        });
+      } catch {}
+    }
+  }
+
+  if (articles.size < Math.min(30, target)) {
     try {
-      const base = website.replace(/\/$/, '');
-      for (let page = 1; page <= 5 && articles.size < target; page++) {
-        const r = await axios.get(`${base}/wp-json/wp/v2/posts?per_page=100&page=${page}`, { timeout: 9000, headers: { 'User-Agent': getUA() }, validateStatus: s => s < 500 });
-        const data = Array.isArray(r.data) ? r.data : [];
-        for (const item of data) {
-          const link = item?.link || item?.guid?.rendered || '';
-          const t = item?.title?.rendered || '';
-          if (!link) continue;
-          try {
-            const u = new URL(link);
-            if (!u.hostname.includes(new URL(website).hostname)) continue;
-            if (!articles.has(u.toString())) {
-              articles.set(u.toString(), { title: (t || u.pathname.split('/').filter(Boolean).slice(-1)[0]?.replace(/[-_]/g, ' ') || 'Article'), url: u.toString() });
+      const $ = await fetchPage(website);
+      if ($) {
+        const selectors = ['article a[href]', '.post a[href]', '.entry-title a[href]', 'h2 a[href]', 'h3 a[href]'];
+        for (const sel of selectors) {
+          $(sel).each((_, el) => {
+            if (articles.size >= target) return false;
+            const href = $(el).attr('href');
+            const title = $(el).text().trim() || $(el).attr('title') || '';
+            if (!href) return;
+            let url = href.startsWith('/') ? `${website}${href}` : href;
+            if (!url.includes(host)) return;
+            if (/\/(tag|category|author|search|archive|topic|section|video|photo|gallery)\b/i.test(url)) return;
+            if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) return;
+            const isArticle =
+              /\/\d{4}\//.test(url) ||
+              /\/\d{4}\/\d{2}\/\d{2}\//.test(url) ||
+              /\.(html|cms)$/.test(url) ||
+              /article|story|news/.test(url) ||
+              /\d{6,}/.test(url) ||
+              /articleshow|newsshow/.test(url);
+            if (isArticle && !articles.has(url)) {
+              articles.set(url, { title, url });
             }
-          } catch {}
+          });
         }
-        if (data.length < 100) break;
       }
     } catch {}
   }
+
+  console.log(`  Total collected: ${articles.size}`);
   return Array.from(articles.values()).slice(0, target);
 }
 
@@ -2409,7 +1153,6 @@ function isBlockedAuthorName(name, website = "") {
 
   const clean = name.trim().toLowerCase();
   const outlet = website.toLowerCase();
-  if (isEditorialName(name)) return false;
   function normalize(str = "") {
     return str
       .toLowerCase()
@@ -2444,11 +1187,6 @@ function isBlockedAuthorName(name, website = "") {
     return true;
   }
 
-  // Block French article-leading phrases unless editorial
-  if (/^(la|le|les|des|du|de|d’|d')\s+/.test(clean) && !/redaction|redaktion/.test(clean)) {
-    return true;
-  }
-
   // Block if pattern matched
   if (blockedPatterns.some(rx => rx.test(clean))) return true;
 
@@ -2468,7 +1206,7 @@ async function extractAuthorsFromBylines(articles, website, max = 10) {
   console.log(`\n[STEP 3] Checking bylines in ${articles.length} articles (target: ${max} authors)`);
   const authors = new Map();
 
-  const limit = Math.min(articles.length, 300);
+  const limit = Math.min(articles.length, 350);
 
   for (let i = 0; i < limit && authors.size < max; i += 5) {
     const batch = articles.slice(i, i + 5);
@@ -2481,15 +1219,6 @@ async function extractAuthorsFromBylines(articles, website, max = 10) {
 
       let authorName = null;
       let authorRole = 'Journalist';
-
-      // Method 0: Body-first strict byline detection (highest priority)
-      try {
-        const simple = await extractArticleAuthorSimple(article.url);
-        if (simple && simple.author && simple.author !== 'Unknown' && !isBlockedAuthorName(simple.author, website)) {
-          authorName = simple.author;
-          if (isEditorialName(authorName)) authorRole = 'Editorial Team';
-        }
-      } catch {}
 
       // Method 1: JSON-LD structured data
       $('script[type="application/ld+json"]').each((idx, el) => {
@@ -2534,30 +1263,19 @@ async function extractAuthorsFromBylines(articles, website, max = 10) {
       if (!authorName) {
         const bylineSelectors = [
           '.author-name', '.byline-author', '[rel="author"]', '.author', '.byline',
-          '.article-author', '.post-author', '.article__author', '.post__author',
-          '[itemprop="author"] [itemprop="name"]', '[itemprop="author"]',
-          '.meta-author', '.entry-author', '.content-author', 'span.byline', '.story__author',
-          '.c-author', '.post-meta .byline', '.entry-meta .byline', '.entry-meta [rel="author"]',
-          '.td-post-author-name', '.jeg_meta_author', '.jeg_post_author', 'address.byline',
-          '.entry-meta .author', '.article-meta .author', '.story-meta .byline',
-          '.content-meta .author', '.blog-meta .byline', '.article-byline', '.header-meta .byline'
+          '.writer-name', '[itemprop="author"] [itemprop="name"]', '[itemprop="author"]',
+          '.story-author', '.article-author', '.post-author'
         ];
 
         for (const sel of bylineSelectors) {
           const $el = $(sel).first();
 
-          const raw = $el.text().trim();
-          const href = $el.find('a[href]').first().attr('href') || $el.attr('href') || '';
-          const isProfileLink = /\/author\//i.test(href || '');
-          const hasPrefix = /^(?:by|par|Publié par|Écrit par|Rédigé par|von|geschrieben von|verfasst von)\b/i.test(raw);
-          let name = ($el.find('a[href]').first().text().trim() || raw)
-            .replace(/^(?:by|par|por|Publicado por|Publié par|Écrit par|Rédigé par|geschrieben von|verfasst von|von|vom|durch|autor(?:in)?\s*:|auteur\s*:|autrice\s*:)\s+/i, '')
+          let name = $el
+            .text()
+            .trim()
+            .replace(/^by\s+/i, '')
             .replace(/\|.*$/, '')
             .trim();
-
-          if (isEditorialName(name)) {
-            authorRole = 'Editorial Team';
-          }
 
           if (name.includes(',')) {
             const parts = name.split(',');
@@ -2582,38 +1300,6 @@ async function extractAuthorsFromBylines(articles, website, max = 10) {
             break;
           }
         }
-      }
-
-      // Method 3b: Targeted editorial body scan
-      if (!authorName) {
-        const headerText = [
-          $('article').first().text(),
-          $('.single-post').first().text(),
-          $('.post').first().text(),
-          $('.entry').first().text(),
-          $('.entry-header').first().text(),
-          $('.article-header').first().text(),
-          $('body').text().substring(0, 2000)
-        ].join(' ').toLowerCase();
-        const hasEditorial =
-          /\b(?:par|publié par|écrit par|rédigé par)\s+la\s+rédaction\b/.test(headerText) ||
-          /\bla\s+rédaction\b/.test(headerText) ||
-          /\bredaktion\b/.test(headerText);
-        if (hasEditorial) {
-          authorName = 'La rédaction';
-          authorRole = 'Editorial Team';
-        }
-      }
-
-      // Method 4: Fallback — body byline detection with strict rules
-      if (!authorName) {
-        try {
-          const simple = await extractArticleAuthorSimple(article.url);
-          if (simple && simple.author && simple.author !== 'Unknown' && !isBlockedAuthorName(simple.author, website)) {
-            authorName = simple.author;
-            if (isEditorialName(authorName)) authorRole = 'Editorial Team';
-          }
-        } catch {}
       }
 
       // Final add to authors map (with blocker protection)
@@ -2641,10 +1327,6 @@ function validateAuthorPage($, authorName, pageUrl = null) {
   const name = authorName.toLowerCase();
   const titleText = ($('title').text() || '').toLowerCase();
   const path = (() => { try { return pageUrl ? new URL(pageUrl).pathname.toLowerCase() : ''; } catch { return ''; } })();
-  const nameSlug = toSlug(authorName);
-  const segs = path.split('/').filter(Boolean);
-  const ix = segs.indexOf('author');
-  const slugInPath = ix !== -1 ? (segs[ix + 1] || '') : '';
 
   let score = 0;
 
@@ -2654,10 +1336,6 @@ function validateAuthorPage($, authorName, pageUrl = null) {
   if ($("meta[name='author']").attr("content")?.toLowerCase().includes(name)) score += 5;
   if (titleText.includes(name)) score += 3;
   if (/author|writer|columnist|profile|people|contributors|staff|byline/.test(path)) score += 3;
-  if (path.includes('/author/') && slugInPath) {
-    if (slugInPath === nameSlug) score += 6;
-    else score -= 4;
-  }
 
   // Bio / profile indicators
   if (/about|bio|profile|journalist|writer|columnist/i.test(pageText)) score += 2;
@@ -2671,10 +1349,7 @@ function validateAuthorPage($, authorName, pageUrl = null) {
     score -= 10;
   }
 
-  if (path.includes('/author/')) {
-    return slugInPath === nameSlug && score >= 5;
-  }
-  return (titleText.includes(name) || pageText.includes(name)) && score >= 7;
+  return score >= 5;
 }
 
 // ============ STEP 4: FIND AUTHOR PROFILE PAGE VIA SERPER ============
@@ -2683,10 +1358,9 @@ async function findAuthorProfile(authorName, website) {
   const hostParts = hostname.split('.');
   const baseDomain = hostParts.slice(-2).join('.');
   const base = authorName.toLowerCase().trim();
-  const nameSlug = toSlug(authorName);
+  const nameSlug = base.replace(/\s+/g, "-");
   const nameUnderscore = base.replace(/\s+/g, "_");
   const firstName = base.split(" ")[0];
-  const editorial = isEditorialName(authorName);
 
   // STEP 1: HIGH-PRECISION SERPER SEARCH FIRST
   const primaryQueries = [
@@ -2768,19 +1442,6 @@ async function findAuthorProfile(authorName, website) {
     `${website}/etreporter/author-${nameSlug}`,
     `${website}/etreporter/author-${nameUnderscore}`
   ];
-
-  if (editorial) {
-    patterns.push(
-      `${website}/redaction`,
-      `${website}/la-redaction`,
-      `${website}/redaktion`,
-      `${website}/team`,
-      `${website}/staff`,
-      `${website}/about`,
-      `${website}/a-propos`,
-      `${website}/qui-sommes-nous`
-    );
-  }
 
   for (const url of patterns) {
     const $ = await fetchPage(url);
@@ -2887,7 +1548,6 @@ async function verifyArticles(articles, authorName) {
   const verified = [];
   const firstName = authorName.split(/\s+/)[0].toLowerCase();
   const lastName = authorName.split(/\s+/).pop()?.toLowerCase() || '';
-  const editorial = isEditorialName(authorName);
 
   for (const article of articles) {
     if (verified.length >= 5) break;
@@ -2911,20 +1571,16 @@ async function verifyArticles(articles, authorName) {
 
             if (
               typeof auth === 'string' &&
-              (
-                (editorial && /redaction|redaktion/i.test(auth.toLowerCase())) ||
-                (auth.toLowerCase().includes(firstName) && (!lastName || auth.toLowerCase().includes(lastName)))
-              )
+              auth.toLowerCase().includes(firstName) &&
+              (!lastName || auth.toLowerCase().includes(lastName))
             ) {
               isAuthorMatch = true;
             }
 
             if (
               auth?.name &&
-              (
-                (editorial && /redaction|redaktion/i.test(auth.name.toLowerCase())) ||
-                (auth.name.toLowerCase().includes(firstName) && (!lastName || auth.name.toLowerCase().includes(lastName)))
-              )
+              auth.name.toLowerCase().includes(firstName) &&
+              (!lastName || auth.name.toLowerCase().includes(lastName))
             ) {
               isAuthorMatch = true;
             }
@@ -2932,35 +1588,8 @@ async function verifyArticles(articles, authorName) {
             if (
               Array.isArray(auth) &&
               auth[0]?.name &&
-              (
-                (editorial && /redaction|redaktion/i.test(auth[0].name.toLowerCase())) ||
-                (auth[0].name.toLowerCase().includes(firstName) && (!lastName || auth[0].name.toLowerCase().includes(lastName)))
-              )
-            ) {
-              isAuthorMatch = true;
-            }
-          }
-          // Fallback to creator/byline properties sometimes used
-          if (item.creator) {
-            const crt = item.creator;
-            if (typeof crt === 'string' && (
-              (editorial && /redaction|redaktion/i.test(crt.toLowerCase())) ||
-              (crt.toLowerCase().includes(firstName) && (!lastName || crt.toLowerCase().includes(lastName)))
-            )) {
-              isAuthorMatch = true;
-            }
-            if (crt?.name && (
-              (editorial && /redaction|redaktion/i.test(crt.name.toLowerCase())) ||
-              (crt.name.toLowerCase().includes(firstName) && (!lastName || crt.name.toLowerCase().includes(lastName)))
-            )) {
-              isAuthorMatch = true;
-            }
-          }
-          if (item.byline && typeof item.byline === 'string') {
-            const bl = item.byline.toLowerCase();
-            if (
-              (editorial && /redaction|redaktion/.test(bl)) ||
-              (bl.includes(firstName) && (!lastName || bl.includes(lastName)))
+              auth[0].name.toLowerCase().includes(firstName) &&
+              (!lastName || auth[0].name.toLowerCase().includes(lastName))
             ) {
               isAuthorMatch = true;
             }
@@ -2971,44 +1600,35 @@ async function verifyArticles(articles, authorName) {
 
     // Method 2: Byline check
     if (!isAuthorMatch) {
-      const bylineSelectors = [
-        '.author', '.byline', '.author-name', '.byline-author', '[rel="author"]', '[itemprop="author"]',
-        '.article__author', '.post__author', '.c-author', 'span.byline', '.story__author', '.meta-author',
-        '.entry-author', '.content-author', '[class*="author"] [class*="name"]'
-      ];
-      let bylineText = '';
-      for (const sel of bylineSelectors) {
-        const t = $(sel).first().text().toLowerCase();
-        if (t && t.length >= 3) { bylineText = t; break; }
-      }
+      const bylineText = $(
+        '.author, .byline, .author-name, .byline-author, [rel="author"], [itemprop="author"]'
+      )
+        .first()
+        .text()
+        .toLowerCase();
 
-      if (editorial ? /redaction|redaktion/.test(bylineText) : (bylineText.includes(firstName) && (!lastName || bylineText.includes(lastName)))) {
+      if (
+        bylineText.includes(firstName) &&
+        (!lastName || bylineText.includes(lastName))
+      ) {
         isAuthorMatch = true;
       }
-      // Explicit "By Name" pattern disabled (only explicit bylines used)
-      // rel="author" link pointing to profile with name
+      // Explicit "By Name" pattern
       if (!isAuthorMatch) {
-        const href = $('a[rel="author"]').first().attr('href') || '';
-        const label = $('a[rel="author"]').first().text().toLowerCase();
-        if (
-          (editorial && /redaction|redaktion/.test(label)) ||
-          (label && label.includes(firstName) && (!lastName || label.includes(lastName))) ||
-          (href && href.toLowerCase().includes(firstName) && (!lastName || href.toLowerCase().includes(lastName)))
-        ) {
+        const bodyText = $('body').text().toLowerCase();
+        if (bodyText.includes(`by ${firstName}`) && (!lastName || bodyText.includes(lastName))) {
           isAuthorMatch = true;
         }
       }
     }
 
     if (isAuthorMatch) {
-      const publishedAt = extractPublicationDate($, article.url);
-      verified.push(publishedAt ? { ...article, publishDate: publishedAt, publishedAt } : article);
+      verified.push(article);
     }
   }
 
   return verified;
 }
-
 // ============ ARTICLE DATE EXTRACTION ==========
 function extractPublicationDate($, url) {
   try {
@@ -3374,35 +1994,24 @@ async function findSocialLinksViaSerper(authorName, outletName, website) {
   if (!links.twitter) console.log(`      ✗ No Twitter found`);
 
   // LINKEDIN SEARCH 
-
   let linkedinResultsAll = [];
-  const nameVariants = new Set([authorName]);
   const parts = authorName.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) nameVariants.add(`${parts[0]} ${parts[parts.length - 1]}`);
-  if (parts.length >= 2) nameVariants.add(`${parts[parts.length - 1]} ${parts[0]}`);
-  if (parts.length >= 2) nameVariants.add(`${parts[0][0]}. ${parts[parts.length - 1]}`);
-  console.log(`      LinkedIn search: "${authorName}" "${synonyms[0] || outletLower}" site:linkedin.com/in`);
-  for (const variant of Array.from(nameVariants).slice(0, 2)) {
-    for (const syn of synonyms.slice(0, 1)) {
-      const qs = [
-        `"${variant}" "${syn}" site:linkedin.com/in`,
-        `"${variant}" site:linkedin.com/in`
-      ];
-      for (const q of qs) {
-        const rs = await serperSearch(q, 6);
-        linkedinResultsAll.push(...rs);
-        if (links.linkedin) break;
-        if (linkedinResultsAll.length > 40) break;
-      }
-      if (links.linkedin) break;
-      if (linkedinResultsAll.length > 40) break;
-    }
-    if (links.linkedin) break;
-    if (linkedinResultsAll.length > 40) break;
+  const firstLast = parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : authorName;
+  const synPrimary = (Array.isArray(synonyms) && synonyms.length ? synonyms[0] : outletLower);
+  const synSecondary = (Array.isArray(synonyms) && synonyms.length > 1 ? synonyms[1] : null);
+  const queries = [
+    `"${authorName}" site:linkedin.com/in`,
+    `"${firstLast}" "${synPrimary}" site:linkedin.com/in`,
+    ...(synSecondary ? [`"${firstLast}" "${synSecondary}" site:linkedin.com/in`] : []),
+    `"${authorName}" "${outletLower}" site:linkedin.com/in`
+  ];
+  for (const q of queries) {
+    const rs = await serperSearch(q, 8);
+    linkedinResultsAll.push(...rs);
+    if (linkedinResultsAll.length >= 24) break;
   }
-  console.log(`      Found ${linkedinResultsAll.length} results`);
   const linkedinCandidates = [];
-  for (const r of linkedinResultsAll.slice(0, 100)) {
+  for (const r of linkedinResultsAll.slice(0, 24)) {
     const link = r.link;
     if (!link) continue;
     if (!/linkedin\.com\/(in|pub)\//.test(link)) continue;
@@ -3413,26 +2022,25 @@ async function findSocialLinksViaSerper(authorName, outletName, website) {
     if (!slug || slug === 'dir' || slug.length < 3) continue;
     if (!/[a-z]/.test(slug)) continue;
     if (rejectPatterns.test(slug)) continue;
-    if (!(slug.includes(firstName) || (lastName && slug.includes(lastName)))) continue;
     const text = `${r.title || ""} ${r.snippet || ""}`.toLowerCase();
     let score = 0;
-    if (text.includes(authorName.toLowerCase())) score += 4;
-    if (text.includes(firstName)) score += 2;
-    if (lastName && text.includes(lastName)) score += 2;
-    if (slug.includes(firstName)) score += 3;
-    if (lastName && slug.includes(lastName)) score += 3;
-    if (/\blinked[in]?\b/i.test(text)) score += 1;
+    if (text.includes(authorName.toLowerCase())) score += 3;
+    if (slug.includes(parts[0]?.toLowerCase() || '')) score += 2;
+    if (parts.length >= 2 && slug.includes(parts[parts.length - 1].toLowerCase())) score += 2;
+    if (text.includes(outletLower)) score += 2;
+    if (synPrimary && text.includes(synPrimary.toLowerCase())) score += 1;
     linkedinCandidates.push({ url: m[1], score });
   }
   linkedinCandidates.sort((a, b) => b.score - a.score);
   if (linkedinCandidates.length) {
-    let chosen = null;
-    for (const cand of linkedinCandidates.slice(0, 5)) {
-      if (await verifyUrl(cand.url)) {
-        const ok = await socialPageMatchesOutlet(cand.url, website, outletName);
-        if (ok) { chosen = cand.url; break; }
-      }
-    }
+    const top = linkedinCandidates.slice(0, 3);
+    const checks = await Promise.all(top.map(async c => {
+      const valid = await verifyUrl(c.url);
+      if (!valid) return null;
+      const ok = await socialPageMatchesOutlet(c.url, website, outletName);
+      return ok ? c.url : null;
+    }));
+    const chosen = checks.find(Boolean) || null;
     if (chosen) {
       links.linkedin = chosen;
       console.log(`      ✓ LinkedIn found: ${links.linkedin}`);
@@ -3444,21 +2052,11 @@ async function findSocialLinksViaSerper(authorName, outletName, website) {
   if (!links.linkedin) console.log(`      ✗ No LinkedIn found`);
 
   if (!links.linkedin) {
-    const variant = authorName;
-    const syn = (typeof synonyms !== "undefined" && Array.isArray(synonyms) && synonyms.length ? synonyms[0] : outletLower);
-    const ddgQueries = [
-      `"${variant}" "${syn}" site:linkedin.com/in`,
-      `"${variant}" site:linkedin.com/in`,
-      `"${authorName}" site:linkedin.com/in`
-    ];
-    const ddgResults = [];
-    for (const q of ddgQueries) {
-      const rs = await ddgHtmlSearch(q, 6);
-      ddgResults.push(...rs);
-    }
-    console.log(`      Found ${ddgResults.length} results`);
+    const parts = authorName.split(/\s+/).filter(Boolean);
+    const firstLast = parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : authorName;
+    const rs = await ddgHtmlSearch(`"${firstLast}" site:linkedin.com/in`, 8);
     const ddgCandidates = [];
-    for (const r of ddgResults.slice(0, 100)) {
+    for (const r of rs.slice(0, 16)) {
       const link = r.link;
       if (!link || !/linkedin\.com\/(in|pub)\//.test(link)) continue;
       if (/\/company\/|\/jobs\/|\/pulse\//.test(link)) continue;
@@ -3468,27 +2066,17 @@ async function findSocialLinksViaSerper(authorName, outletName, website) {
       if (!slug || slug === 'dir' || slug.length < 3) continue;
       if (!/[a-z]/.test(slug)) continue;
       if (rejectPatterns.test(slug)) continue;
-      if (!(slug.includes(firstName) || (lastName && slug.includes(lastName)))) continue;
-      const text = `${r.title || ''} ${r.snippet || ''}`.toLowerCase();
       let score = 0;
-      if (text.includes(authorName.toLowerCase())) score += 4;
-      if (slug.includes(firstName)) score += 2;
-      if (lastName && slug.includes(lastName)) score += 2;
-      if (text.includes(outletLower)) score += 2;
-      for (const syn of synonyms) { if (syn && text.includes(syn.toLowerCase())) { score += 1; break; } }
-      if (/\blinked[in]?\b/i.test(text)) score += 1;
+      if (slug.includes(parts[0]?.toLowerCase() || '')) score += 2;
+      if (parts.length >= 2 && slug.includes(parts[parts.length - 1].toLowerCase())) score += 2;
       ddgCandidates.push({ url: m[1], score });
     }
     ddgCandidates.sort((a, b) => b.score - a.score);
-    if (ddgCandidates.length) {
-      let chosen = null;
-      for (const cand of ddgCandidates.slice(0, 5)) {
-        if (await verifyUrl(cand.url)) {
-          const ok = await socialPageMatchesOutlet(cand.url, website, outletName);
-          if (ok) { chosen = cand.url; break; }
-        }
+    for (const cand of ddgCandidates.slice(0, 2)) {
+      if (await verifyUrl(cand.url)) {
+        const ok = await socialPageMatchesOutlet(cand.url, website, outletName);
+        if (ok) { links.linkedin = cand.url; break; }
       }
-      if (chosen) { links.linkedin = chosen; }
     }
   }
 
@@ -3634,97 +2222,6 @@ async function extractRoleFromSocialProfiles(links, authorName, outletName, webs
   }
   return r;
 }
-
-// ============ PERSONAL WEBSITE DISCOVERY ============
-async function findPersonalWebsite(authorName, socialLinks, website, outletName) {
-  const blockedHosts = /facebook|instagram|twitter|x\.com|linkedin|medium\.com\/company|substack\.com\/publication|blogspot\.com\/u\//i;
-  const outletHost = (() => { try { return new URL(website).hostname.replace(/^www\./, ''); } catch { return ''; } })();
-  const queries = [
-    `"${authorName}" personal website`,
-    `"${authorName}" portfolio`,
-    `"${authorName}" official site`,
-    `"${authorName}" about me`,
-    `"${authorName}" site:about.me`,
-    `"${authorName}" site:substack.com`,
-    `"${authorName}" site:medium.com`,
-    `"${authorName}" site:notion.site`,
-    `"${authorName}" site:wordpress.com`,
-    `"${authorName}" blog`
-  ];
-  const results = [];
-  for (const q of queries) {
-    const rs = await serperSearch(q, 6);
-    results.push(...rs);
-    const drs = await ddgHtmlSearch(q, 6);
-    results.push(...drs);
-    if (results.length > 40) break;
-  }
-  const candidates = [];
-  for (const r of results) {
-    const link = r.link;
-    if (!link || !/^https?:\/\//.test(link)) continue;
-    try {
-      const u = new URL(link);
-      const h = u.hostname.replace(/^www\./, '').toLowerCase();
-      if (outletHost && h.includes(outletHost)) continue;
-      if (blockedHosts.test(h)) continue;
-      if (/linkedin\.com|twitter\.com|x\.com|facebook\.com|instagram\.com/.test(h)) continue;
-      candidates.push(u.toString());
-    } catch {}
-  }
-  for (const url of Array.from(new Set(candidates)).slice(0, 10)) {
-    try {
-      const ok = await verifyUrl(url);
-      if (!ok) continue;
-      const $ = await fetchPage(url);
-      if (!$) continue;
-      const name = authorName.toLowerCase();
-      const t = [
-        $('title').text() || '',
-        $('meta[name="description"]').attr('content') || '',
-        $('meta[property="og:description"]').attr('content') || '',
-        $('h1').first().text() || '',
-        $('body').text().substring(0, 1000) || ''
-      ].join(' ').toLowerCase();
-      if (t.includes(name.split(' ')[0]) && t.includes(name.split(' ').slice(-1)[0])) {
-        return url;
-      }
-    } catch {}
-  }
-  return null;
-}
-
-// ============ EXTRACT ROLE FROM PERSONAL WEBSITE ============
-async function extractRoleFromPersonalSite(url, authorName, outletName, website) {
-  try {
-    const $ = await fetchPage(url);
-    if (!$) return null;
-    const tokens = buildOutletMatchTokens(website, outletName);
-    const text = [
-      $('meta[name="description"]').attr('content') || '',
-      $('meta[property="og:description"]').attr('content') || '',
-      $('h1').first().text() || '',
-      $('h2').first().text() || '',
-      $('body').text().substring(0, 1500) || ''
-    ].join(' ');
-    for (const tok of tokens) {
-      const rx1 = new RegExp(`([A-Za-z][A-Za-z\\s&\\-]{3,60})\\s+(?:at|@)\\s+${tok.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}`, 'i');
-      const m1 = text.match(rx1);
-      if (m1 && m1[1]) {
-        const cand = m1[1].trim();
-        const r = matchRole(cand);
-        if (r && !isGenericRole(r)) return r;
-      }
-    }
-    const rb = extractRoleFromBio(text, authorName);
-    if (rb && !isGenericRole(rb)) return rb;
-    const mr = matchRole(text);
-    if (mr && !isGenericRole(mr)) return mr;
-    return null;
-  } catch {
-    return null;
-  }
-}
 // ============ EXTRACT FULL AUTHOR PROFILE ============
 async function extractAuthorProfile(author, outletName, website) {
   console.log(`\n  [${author.name}]`);
@@ -3735,7 +2232,6 @@ async function extractAuthorProfile(author, outletName, website) {
   let profileUrl = null;
   let articles = author.articles || [];
   let verifiedArticles = [];
-  let lastActiveAt = null;
 
   // STEP 4: Find profile page
   console.log(`    Finding profile page...`);
@@ -3877,18 +2373,6 @@ async function extractAuthorProfile(author, outletName, website) {
     if (rSocial && !isGenericRole(rSocial)) role = rSocial;
   }
 
-  // Personal website role discovery before publication fallback
-  if (!role || isGenericRole(role)) {
-    const personalSite = await findPersonalWebsite(author.name, socialLinks, website, outletName);
-    if (personalSite) {
-      const rPortfolio = await extractRoleFromPersonalSite(personalSite, author.name, outletName, website);
-      if (rPortfolio && !isGenericRole(rPortfolio)) {
-        role = rPortfolio;
-        console.log(`    ✓ Role from personal site: ${role}`);
-      }
-    }
-  }
-
   // Role/email fallback via article pages if still generic/missing
   if ((role === 'Journalist' || !email) && articles.length > 0) {
     for (const art of articles.slice(0, 3)) {
@@ -3922,23 +2406,6 @@ async function extractAuthorProfile(author, outletName, website) {
     if (!seenV.has(a.url)) {
       seenV.add(a.url);
       uniqueVerifiedArticles.push(a);
-    }
-  }
-
-  // Merge publish dates from verified articles into full article list
-  const pubMap = new Map();
-  for (const va of uniqueVerifiedArticles) {
-    const p = (va.publishedAt || va.publishDate || null);
-    if (p) pubMap.set(va.url, p);
-  }
-  if (!lastActiveAt) {
-    // Try to infer from verified article dates first, then fallback
-    const dates = Array.from(pubMap.values()).map(v => new Date(v)).filter(d => !isNaN(d.getTime()));
-    if (dates.length) {
-      dates.sort((a, b) => b.getTime() - a.getTime());
-      lastActiveAt = dates[0].toISOString();
-    } else {
-      lastActiveAt = await inferLastActiveDate(uniqueArticles);
     }
   }
 
@@ -3981,10 +2448,9 @@ async function extractAuthorProfile(author, outletName, website) {
     profileUrl,
     profileUrlVerified: !!profileUrl,
     socialLinks,
-    verifiedArticles: uniqueVerifiedArticles.slice(0, 20).map(a => ({ title: a.title, url: a.url, publishDate: pubMap.get(a.url) || null })),
-    articles: uniqueArticles.slice(0, 20).map(a => ({ title: a.title, url: a.url, publishDate: pubMap.get(a.url) || null })),
+    verifiedArticles: uniqueVerifiedArticles.slice(0, 20).map(a => ({ title: a.title, url: a.url })),
+    articles: uniqueArticles.slice(0, 20).map(a => ({ title: a.title, url: a.url })),
     totalArticles: uniqueArticles.length,
-    lastActiveAt,
     topics: topics.slice(0, 5),
     keywords: keywordStrings.slice(0, 10),
     influenceScore: influence
@@ -4012,8 +2478,19 @@ export async function scrapeLightweight(outletName, maxAuthors = 30, progressCal
 
     // STEP 3: Extract authors from bylines
     let authors = await extractAuthorsFromBylines(articles, website, maxAuthors);
-    if (authors.length === 0) {
-      return { error: `No authors found`, authorsCount: 0, authors: [] };
+    if (authors.length < 30) {
+      const pages = await findAuthorsPagesViaSerper(website, outletName, country);
+      for (const p of pages.slice(0, 3)) {
+        const extra = await scrapeAuthorsFromDirectoryPage(p, 50);
+        for (const a of extra) {
+          if (!authors.some(x => x.name.toLowerCase() === a.name.toLowerCase())) authors.push({ name: a.name, articles: [], role: 'Journalist' });
+          if (authors.length >= 30) break;
+        }
+        if (authors.length >= 30) break;
+      }
+      if (authors.length === 0) {
+        return { error: `No authors found`, authorsCount: 0, authors: [] };
+      }
     }
 
     // STEPS 4-9: Extract full profile for each author
@@ -4025,7 +2502,7 @@ export async function scrapeLightweight(outletName, maxAuthors = 30, progressCal
 
       const profile = await extractAuthorProfile(authors[i], outletName, website);
 
-      // ✅ VERIFY SOCIAL LINKS HERE (use socialLinks object)
+      // VERIFY SOCIAL LINKS HERE 
       if (profile.socialLinks && (profile.socialLinks.twitter || profile.socialLinks.linkedin)) {
         const verifiedSocials = await verifySocialLinks(profile.socialLinks, website, outletName);
         profile.socialLinks = verifiedSocials;
@@ -4062,50 +2539,3 @@ export async function scrapeLightweight(outletName, maxAuthors = 30, progressCal
 
 
 export default scrapeLightweight;
-/*  extractUrlsFromText
-function extractUrlsFromText(raw, pageHost) {
-  const urls = new Set();
-  const rx = /(https?:\/\/[^\s"'<>]+)|\b(www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
-  let m;
-  while ((m = rx.exec(raw)) !== null) {
-    let cand = (m[1] || m[2] || '').trim();
-    if (!cand) continue;
-    if (!/^https?:\/\//.test(cand)) cand = `https://${cand}`;
-    try {
-      const u = new URL(cand);
-      const h = u.hostname.replace(/^www\./, '').toLowerCase();
-      if (h === pageHost) continue;
-      if (/facebook\.com|instagram\.com|twitter\.com|x\.com|linkedin\.com|doubleclick\.net|cloudflareinsights\.com|gstatic\.com|google\.com/.test(h)) continue;
-      urls.add(u.toString());
-    } catch { }
-  }
-  return Array.from(urls);
-}
-*/
-
-// === AGGRESSIVE DOMAIN EXTRACTION FROM TEXT ===
-function extractAllPotentialUrlsFromText(raw, contextTag = '') {
-  const urls = new Set();
-  if (!raw) return [];
-  // Unescape any HTML entities, collapse all line breaks/tabs etc
-  let flattened = raw.replace(/\r|\n|\t/g, ' ');
-  try { flattened = he.decode(flattened); } catch { }
-  // Regex: Find words containing a dot and TLD (allow a-z, 0-9, hyphens, dots), optionally surrounded by punctuation, whitespace, parens, etc
-  // Also match http(s)://, www., or just domain.tld
-  const rx = /\b(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9][a-zA-Z0-9\-\.]*\.[a-zA-Z]{2,}(?:\/[\w\-\/.\?%&=]*)?)/gi;
-  let m;
-  while ((m = rx.exec(flattened)) !== null) {
-    let dom = m[0];
-    dom = dom.replace(/[.,;:!?\)\[\]{}\">']+$/, '');
-    dom = dom.replace(/^['\(\["{]+/, '');
-    // Defend against common false positives (double dots, ending on term, etc)
-    if ((dom.match(/\./g) || []).length < 1) continue;
-    if (!/^https?:\/\//.test(dom)) dom = 'https://' + dom;
-    urls.add(dom);
-    if (typeof process !== 'undefined' && process.env.DEBUG_FULL_URL_SCAN) {
-      console.log(`[URL_SCAN] From ${contextTag}: Matched candidate domain: ${dom} (in:`, raw.slice(Math.max(0, m.index - 30), m.index + 60), ")");
-    }
-  }
-  return Array.from(urls);
-}
-

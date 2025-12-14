@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import Author from "../models/Author.js";
 import AuthorProfile from "../models/AuthorProfile.js";
 import { scrapeLightweight } from "../scrapers/newsOutletScraper.js";
@@ -298,20 +299,30 @@ router.get("/job-status/:jobId", (req, res) => {
 router.get("/profiles", async (req, res) => {
   try {
     const { outlet, limit } = req.query;
-    
+    if (!mongoose.connection || mongoose.connection.readyState !== 1) {
+      return res.json({
+        success: true,
+        count: 0,
+        outlet: outlet || 'all',
+        profiles: [],
+        stats: { total: 0, fresh: 0, stale: 0 }
+      });
+    }
     const query = outlet ? { outlet: outlet.toLowerCase().trim() } : {};
     
-    // If limit is explicitly provided, use it; otherwise return ALL profiles
-    const limitValue = limit ? parseInt(limit) : 0; // 0 means no limit in MongoDB
+
+    const limitValue = Math.min(parseInt(limit || '500'), 2000);
     
     const profiles = await AuthorProfile.find(query)
-      .sort({ articles: -1, scrapedAt: -1 })
+      .select('name outlet profileLink profilePic bio role email section topics articles articleLinks articleData latestArticle socialLinks influence keywords publicationFrequency lastActiveAt scrapedAt')
+      .lean()
+      .sort({ lastActiveAt: -1, influence: -1 })
       .limit(limitValue);
 
     // Add metadata about data freshness
     const now = new Date();
     const profilesWithMeta = profiles.map(p => ({
-      ...p.toObject(),
+      ...p,
       dataAge: p.scrapedAt ? Math.floor((now - p.scrapedAt) / (1000 * 60 * 60 * 24)) : null, // days
       isFresh: p.scrapedAt && (now - p.scrapedAt) < (7 * 24 * 60 * 60 * 1000) // within 7 days
     }));

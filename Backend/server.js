@@ -7,12 +7,14 @@ import * as cheerio from "cheerio";
 import AuthorProfile from './models/AuthorProfile.js';
 import { JournalistModel } from './models/Journalist.js';
 import authorRoutes from './routes/authorRoutes.js';
+import compression from "compression";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5002;
 const MONGO_URI = process.env.MONGO_URI;
+const isDbConnected = () => mongoose.connection && mongoose.connection.readyState === 1;
 
 const allowedOrigins = [
   "http://localhost:8080",     // Local development
@@ -33,6 +35,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(compression());
 
 app.use('/api/authors', authorRoutes);
 
@@ -780,7 +783,15 @@ app.get("/authors", async (req, res) => {
 
 app.get('/authorprofiles', async (req, res) => {
   try {
-    const profiles = await AuthorProfile.find().sort({ scrapedAt: -1 });
+    if (!isDbConnected()) {
+      return res.json([]);
+    }
+    const limit = Math.min(parseInt((req.query?.limit || '500')), 2000);
+    const profiles = await AuthorProfile.find({})
+      .select('name outlet profileLink profilePic topics articles articleLinks articleData scrapedAt influence keywords role lastActiveAt')
+      .lean()
+      .sort({ lastActiveAt: -1, influence: -1 })
+      .limit(limit);
     res.json(profiles);
   } catch (err) {
     console.error('Error fetching author profiles:', err);
@@ -827,6 +838,9 @@ app.get('/authorprofile/:outlet/:name', async (req, res) => {
 // ---------------- Get Topics with journalist count ----------------
 app.get('/topics', async (req, res) => {
   try {
+    if (!isDbConnected()) {
+      return res.json([]);
+    }
     const topicsData = await AuthorProfile.aggregate([
       { $unwind: '$topics' },
       { $match: { topics: { $in: TOPICS } } },
@@ -866,6 +880,9 @@ app.get('/topics', async (req, res) => {
 
 app.get("/outlets", async (req, res) => {
   try {
+    if (!isDbConnected()) {
+      return res.json([]);
+    }
     // Get all outlets from AuthorProfile (contains enriched data)
     const outlets = await AuthorProfile.distinct("outlet");
     
@@ -893,6 +910,9 @@ app.get("/outlets", async (req, res) => {
 // Get recent activities
 app.get("/activities", async (req, res) => {
   try {
+    if (!isDbConnected()) {
+      return res.json([]);
+    }
     // Fetch latest 20 author activities (you can modify criteria)
     const authors = await AuthorProfile.find()
       .sort({ scrapedAt: -1 }) // latest first

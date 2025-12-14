@@ -62,6 +62,8 @@ AuthorProfileSchema.index({ influence: -1 }); // For sorting by influence
 AuthorProfileSchema.index({ publicationFrequency: 1 });
 AuthorProfileSchema.index({ role: 1 }); // NEW: For filtering by role
 AuthorProfileSchema.index({ lastActiveAt: -1 });
+AuthorProfileSchema.index({ scrapedAt: -1 });
+AuthorProfileSchema.index({ articles: -1 });
 
 const AuthorProfile = mongoose.models.AuthorProfile || mongoose.model("AuthorProfile", AuthorProfileSchema);
 

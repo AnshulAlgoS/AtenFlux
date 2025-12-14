@@ -82,7 +82,6 @@ export default function AuthorsFetcher() {
             { outlet, maxAuthors: 10 },
             {
               headers: { "Cache-Control": "no-cache" },
-              timeout: 30000
             }
           );
           addLog(` Scrape job started at ${url}`);
@@ -116,13 +115,9 @@ export default function AuthorsFetcher() {
       const statusUrl = `${chosenBaseUrl}${statusPath.startsWith('/') ? statusPath : `/${statusPath}`}`;
       let completedData: any | null = null;
 
-      const startTime = Date.now();
-      const MAX_WAIT_MS = 15 * 60 * 1000; // 15 minutes
-
-      // Poll silently without ANY logging
-      while (!completedData && Date.now() - startTime < MAX_WAIT_MS) {
+      while (!completedData) {
         try {
-          const statusRes = await axios.get(statusUrl, { timeout: 10000 });
+          const statusRes = await axios.get(statusUrl);
           const status = statusRes.data;
 
           // Check for failure
@@ -147,12 +142,6 @@ export default function AuthorsFetcher() {
         await new Promise((r) => setTimeout(r, 2500));
       }
 
-      if (!completedData) {
-        setError(" Timed out waiting for scraping to complete");
-        addLog(" Timed out while monitoring job status");
-        return;
-      }
-
       const authorsList = completedData.authors || [];
       addLog(` Discovered ${completedData.authorsFound || authorsList.length} journalists!`);
       addLog(` Total articles scraped: ${authorsList.reduce((sum: number, a: any) => sum + (a.totalArticles || 0), 0)}`);
@@ -161,7 +150,7 @@ export default function AuthorsFetcher() {
         const outletParam = outlet.toLowerCase().trim();
         const profilesUrl = `${statusUrl.split('/api/authors/job-status')[0]}${API_ENDPOINTS.PROFILES}?outlet=${encodeURIComponent(outletParam)}&limit=100`;
         addLog(` Fetching saved profiles from ${profilesUrl}`);
-        const dbRes = await axios.get(profilesUrl, { timeout: 20000 });
+        const dbRes = await axios.get(profilesUrl);
         const payload = dbRes.data as any;
         const list = Array.isArray(payload) ? payload : (payload.profiles || []);
         const normalized = list.map((p: any) => ({
@@ -224,7 +213,7 @@ export default function AuthorsFetcher() {
       addLog(` Exporting CSV for ${outletParam || 'all outlets'}`);
       for (const url of urls) {
         try {
-          const res = await axios.get(url, { responseType: 'blob', timeout: 30000 });
+          const res = await axios.get(url, { responseType: 'blob' });
           const blob = res.data as Blob;
           const cd = (res.headers && (res.headers["content-disposition"] || res.headers["Content-Disposition"])) || "";
           const m = /filename="?([^";]+)"?/i.exec(cd || "");
