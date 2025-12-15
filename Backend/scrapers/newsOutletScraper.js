@@ -59,6 +59,35 @@ async function ddgHtmlSearch(query, max = 10) {
   }
 }
 
+async function fetchWordPressPostsInto(website, target, articles) {
+  try {
+    const per = 100;
+    for (let page = 1; page <= 6 && articles.size < target; page++) {
+      try {
+        const url = `${website.replace(/\/+$/, '')}/wp-json/wp/v2/posts?per_page=${per}&page=${page}&_fields=link,title`;
+        const res = await axios.get(url, { headers: { 'User-Agent': getUA() }, timeout: 10000, validateStatus: s => s < 500 });
+        if (Array.isArray(res.data)) {
+          for (const item of res.data) {
+            if (articles.size >= target) break;
+            const link = item?.link;
+            let title = item?.title?.rendered || item?.title || '';
+            title = String(title).replace(/<[^>]+>/g, '').trim();
+            if (!link || !title) continue;
+            const host = new URL(website).hostname;
+            const u = link.startsWith('/') ? `${website}${link}` : link;
+            if (!u.includes(host)) continue;
+            if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(u)) continue;
+            if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(u)) continue;
+            if (!articles.has(u)) {
+              articles.set(u, { title, url: u });
+            }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+}
+
 // ============ FETCH PAGE ============
 async function fetchPage(url, timeout = 12000) {
   try {
@@ -492,6 +521,7 @@ const KNOWN_WEBSITES = {
   'nyt': 'https://www.nytimes.com',
   'washington post': 'https://www.washingtonpost.com',
   'al jazeera': 'https://www.aljazeera.com',
+  'nairametrics': 'https://nairametrics.com',
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
@@ -511,11 +541,30 @@ async function detectOutletWebsite(outletName) {
   }
 
   for (const [key, url] of Object.entries(KNOWN_WEBSITES)) {
-    if (normalizedName.includes(key) || key.includes(normalizedName)) {
+    const keySqueezed = key.replace(/\s+/g, "");
+    if (squeezed === keySqueezed) {
       console.log(`  ✓ Partial known match "${key}": ${url}`);
       return url;
     }
   }
+
+  try {
+    const guesses = [
+      `https://${squeezed}.com`,
+      `https://www.${squeezed}.com`,
+      `https://${squeezed}.com.ng`,
+      `https://www.${squeezed}.com.ng`
+    ];
+    for (const g of guesses) {
+      try {
+        const res = await axios.head(g, { timeout: 4000, maxRedirects: 3, validateStatus: s => s < 400 });
+        if (res.status >= 200 && res.status < 400) {
+          console.log(`  ✓ Direct domain match: ${g}`);
+          return g;
+        }
+      } catch {}
+    }
+  } catch {}
 
 
   // STEP 2: SERPER GLOBAL
@@ -990,6 +1039,19 @@ async function collectArticles(website, target = 350) {
 
   console.log(`  RSS collected: ${articles.size}`);
 
+  if (articles.size < Math.min(80, target)) {
+    try {
+      const $root = await fetchPage(website);
+      if ($root) {
+        const html = $root.html().toLowerCase();
+        const isWp = html.includes('wp-content') || (($root('meta[name="generator"]').attr('content') || '').toLowerCase().includes('wordpress'));
+        if (isWp) {
+          await fetchWordPressPostsInto(website, target, articles);
+        }
+      }
+    } catch {}
+  }
+
   // STEP 2: AUTO-DETECT SECTIONS FROM NAVBAR/FOOTER/INTERNAL LINKS
   const sectionUrls = new Set([
     website,
@@ -997,6 +1059,29 @@ async function collectArticles(website, target = 350) {
     `${website}/business`, `${website}/opinion`, `${website}/sports`,
     `${website}/entertainment`, `${website}/tech`, `${website}/politics`
   ]);
+  try {
+    const hostLower = host.toLowerCase();
+    if (hostLower.includes('nairametrics.com')) {
+      const base = website.replace(/\/+$/, '');
+      const nairaSections = [
+        'latest-news',
+        'category/news',
+        'category/business-news',
+        'category/markets',
+        'category/economy',
+        'category/companies',
+        'category/technology',
+        'category/opinion',
+        'category/analysis',
+        'category/investment',
+        'category/cryptocurrency',
+        'category/energy'
+      ];
+      for (const p of nairaSections) {
+        sectionUrls.add(`${base}/${p}`);
+      }
+    }
+  } catch {}
 
   try {
     const $ = await fetchPage(website);
@@ -1006,6 +1091,10 @@ async function collectArticles(website, target = 350) {
         if (!href) return;
 
         if (/\/(news|world|business|sports|opinion|tech|politics|entertainment|lifestyle|cities|education|health|science)\b/i.test(href)) {
+          let sec = href.startsWith('/') ? `${website}${href}` : href;
+          if (sec.includes(host)) sectionUrls.add(sec.split('?')[0]);
+        }
+        if (/\/category\//i.test(href)) {
           let sec = href.startsWith('/') ? `${website}${href}` : href;
           if (sec.includes(host)) sectionUrls.add(sec.split('?')[0]);
         }
@@ -1021,6 +1110,24 @@ async function collectArticles(website, target = 350) {
 
     console.log(`  → Scraping section: ${section}`);
 
+    if (/\/category\//i.test(section)) {
+      const feedUrl = `${section.replace(/\/+$/, '')}/feed`;
+      try {
+        const rf = await axios.get(feedUrl, { headers: { 'User-Agent': getUA() }, timeout: 8000 });
+        const $f = cheerio.load(rf.data, { xmlMode: true });
+        $f('item').each((_, el) => {
+          if (articles.size >= target) return false;
+          const title = $f(el).find('title').text().trim();
+          const link = $f(el).find('link').text().trim();
+          if (!title || !link) return;
+          const url = link.startsWith('/') ? `${website}${link}` : link;
+          if (!url.includes(host)) return;
+          if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(url)) return;
+          if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) return;
+          if (!articles.has(url)) articles.set(url, { title, url });
+        });
+      } catch {}
+    }
     for (let page = 1; page <= 20; page++) {
       if (articles.size >= target) break;
 
@@ -1060,10 +1167,15 @@ async function collectArticles(website, target = 350) {
 
         if (!url.includes(host)) return;
 
-        if (/\/(tag|category|author|page|search|login|signup|about|policy|terms|archive|topic|section|video|photo|gallery)\b/i.test(url)) return;
+        if (/\/(tag|author|search|login|signup|about|policy|terms|archive|topic|video|photo|gallery)\b/i.test(url)) return;
         if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) return;
 
+        const rel = $(el).attr('rel') || '';
+        const cls = [$(el).attr('class') || '', $(el).parent().attr('class') || ''].join(' ');
+        const isWpRel = /bookmark/i.test(rel) || /(entry-title|post-title|post-link)/i.test(cls);
         const isArticle =
+          isWpRel ||
+          /\?p=\d+/.test(url) ||
           /\/\d{4}\//.test(url) ||
           /\/\d{4}\/\d{2}\/\d{2}\//.test(url) ||
           /\.(html|cms)$/.test(url) ||
@@ -1086,28 +1198,92 @@ async function collectArticles(website, target = 350) {
       `${website}/sitemap.xml`,
       `${website}/wp-sitemap.xml`
     ];
+    try {
+      const hostLower = host.toLowerCase();
+      if (hostLower.includes('nairametrics.com')) {
+        for (let i = 1; i <= 12 && articles.size < target; i++) {
+          try {
+            const sm = `${website.replace(/\/+$/, '')}/wp-sitemap-posts-post-${i}.xml`;
+            const r = await axios.get(sm, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
+            const $p = cheerio.load(r.data, { xmlMode: true });
+            $p('loc').each((_, el) => {
+              if (articles.size >= target) return false;
+              const u = $p(el).text().trim();
+              if (!u || !u.includes(host)) return;
+              if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(u)) return;
+              if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(u)) return;
+              const isArticle =
+                /\?p=\d+/.test(u) ||
+                /\/\d{4}\//.test(u) ||
+                /\/\d{4}\/\d{2}\/\d{2}\//.test(u) ||
+                /\.(html|cms)$/.test(u) ||
+                /article|story|news/.test(u) ||
+                /\d{6,}/.test(u) ||
+                /articleshow|newsshow/.test(u);
+              if (isArticle && !articles.has(u)) {
+                articles.set(u, { title: '', url: u });
+              }
+            });
+          } catch {}
+        }
+      }
+    } catch {}
     for (const sm of sitemapCandidates) {
       if (articles.size >= target) break;
       try {
         const res = await axios.get(sm, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
         const $ = cheerio.load(res.data, { xmlMode: true });
+        const locs = [];
         $('loc').each((_, el) => {
           if (articles.size >= target) return false;
           const loc = $(el).text().trim();
-          if (!loc || !loc.includes(host)) return;
-          if (/\/(tag|category|author|search|archive|topic|section|video|photo|gallery)\b/i.test(loc)) return;
-          if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(loc)) return;
-          const isArticle =
-            /\/\d{4}\//.test(loc) ||
-            /\/\d{4}\/\d{2}\/\d{2}\//.test(loc) ||
-            /\.(html|cms)$/.test(loc) ||
-            /article|story|news/.test(loc) ||
-            /\d{6,}/.test(loc) ||
-            /articleshow|newsshow/.test(loc);
-          if (isArticle && !articles.has(loc)) {
-            articles.set(loc, { title: '', url: loc });
-          }
+          if (!loc) return;
+          locs.push(loc);
         });
+        let childFetched = 0;
+        for (const loc of locs) {
+          if (articles.size >= target) break;
+          if (/\.(xml)(\?.*)?$/.test(loc) && loc.includes(host) && childFetched < 6) {
+            try {
+              const r2 = await axios.get(loc, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
+              const $2 = cheerio.load(r2.data, { xmlMode: true });
+              $2('loc').each((_, el2) => {
+                if (articles.size >= target) return false;
+                const u = $2(el2).text().trim();
+                if (!u || !u.includes(host)) return;
+                if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(u)) return;
+                if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(u)) return;
+                const isArticle =
+                  /\?p=\d+/.test(u) ||
+                  /\/\d{4}\//.test(u) ||
+                  /\/\d{4}\/\d{2}\/\d{2}\//.test(u) ||
+                  /\.(html|cms)$/.test(u) ||
+                  /article|story|news/.test(u) ||
+                  /\d{6,}/.test(u) ||
+                  /articleshow|newsshow/.test(u);
+                if (isArticle && !articles.has(u)) {
+                  articles.set(u, { title: '', url: u });
+                }
+              });
+              childFetched++;
+            } catch {}
+          } else {
+            if (!loc.includes(host)) continue;
+            if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(loc)) continue;
+            if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(loc)) continue;
+            const isArticle =
+              /\?p=\d+/.test(loc) ||
+              /\/\d{4}\//.test(loc) ||
+              /\/\d{4}\/\d{2}\/\d{2}\//.test(loc) ||
+              /\.(html|cms)$/.test(loc) ||
+              /article|story|news/.test(loc) ||
+              /\d{6,}/.test(loc) ||
+              /articleshow|newsshow/.test(loc);
+            if (isArticle && !articles.has(loc)) {
+              articles.set(loc, { title: '', url: loc });
+            }
+          }
+        }
       } catch {}
     }
   }
@@ -1116,7 +1292,7 @@ async function collectArticles(website, target = 350) {
     try {
       const $ = await fetchPage(website);
       if ($) {
-        const selectors = ['article a[href]', '.post a[href]', '.entry-title a[href]', 'h2 a[href]', 'h3 a[href]'];
+        const selectors = ['article a[href]', '.post a[href]', '.entry-title a[href]', 'a[rel="bookmark"]', 'h2 a[href]', 'h3 a[href]'];
         for (const sel of selectors) {
           $(sel).each((_, el) => {
             if (articles.size >= target) return false;
@@ -2478,7 +2654,7 @@ export async function scrapeLightweight(outletName, maxAuthors = 30, progressCal
 
     // STEP 3: Extract authors from bylines
     let authors = await extractAuthorsFromBylines(articles, website, maxAuthors);
-    if (authors.length < 30) {
+    if (authors.length < 5) {
       const pages = await findAuthorsPagesViaSerper(website, outletName, country);
       for (const p of pages.slice(0, 3)) {
         const extra = await scrapeAuthorsFromDirectoryPage(p, 50);
