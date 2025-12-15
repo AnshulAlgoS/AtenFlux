@@ -338,6 +338,28 @@ const INVALID_PATTERNS = [
   /^(previous|next)$/i
 ];
 
+function isEditorialName(name) {
+  try {
+    const n = String(name).toLowerCase().trim();
+    if (!n || n.length < 3) return false;
+    if (/\beditorial\b|\bopinion\b|\bcolumn\b|\bboard\b/.test(n)) return true;
+    if (/\bteam\b|\bstaff\b|\bdesk\b|\bbureau\b|\bnewsroom\b/.test(n)) return true;
+    const brands = [
+      'nairametrics',
+      'icir',
+      'international centre for investigative reporting',
+      'republic',
+      'stears',
+      'zikoko',
+      'techdailypost',
+      'politics nigeria',
+      'daily nigerian'
+    ];
+    for (const b of brands) { if (n.includes(b)) return true; }
+    return false;
+  } catch { return false; }
+}
+
 function isValidName(name) {
   if (!name || typeof name !== 'string') return false;
   const clean = name.trim();
