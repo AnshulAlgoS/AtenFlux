@@ -16,7 +16,8 @@ if (!SERPER_API_KEY) {
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
 ];
 
 const getUA = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
@@ -64,8 +65,18 @@ async function fetchWordPressPostsInto(website, target, articles) {
     const per = 100;
     for (let page = 1; page <= 6 && articles.size < target; page++) {
       try {
-        const url = `${website.replace(/\/+$/, '')}/wp-json/wp/v2/posts?per_page=${per}&page=${page}&_fields=link,title`;
-        const res = await axios.get(url, { headers: { 'User-Agent': getUA() }, timeout: 10000, validateStatus: s => s < 500 });
+        const base = website.replace(/\/+$/, '');
+        const url = `${base}/wp-json/wp/v2/posts?per_page=${per}&page=${page}&orderby=date&order=desc&_fields=link,title`;
+        const res = await axios.get(url, {
+          headers: {
+            'User-Agent': getUA(),
+            'Accept': 'application/json',
+            'Referer': (() => { try { return new URL(website).origin; } catch { return undefined; } })()
+          },
+          timeout: 12000,
+          maxRedirects: 3,
+          validateStatus: s => s < 500
+        });
         if (Array.isArray(res.data)) {
           for (const item of res.data) {
             if (articles.size >= target) break;
@@ -73,6 +84,72 @@ async function fetchWordPressPostsInto(website, target, articles) {
             let title = item?.title?.rendered || item?.title || '';
             title = String(title).replace(/<[^>]+>/g, '').trim();
             if (!link || !title) continue;
+            const host = new URL(website).hostname;
+            const u = link.startsWith('/') ? `${website}${link}` : link;
+            if (!u.includes(host)) continue;
+            if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(u)) continue;
+            if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(u)) continue;
+            if (!articles.has(u)) {
+              articles.set(u, { title, url: u });
+            }
+          }
+        }
+      } catch {}
+      // Alt REST route fallback
+      try {
+        if (articles.size >= target) break;
+        const alt = `${website.replace(/\/+$/, '')}/?rest_route=/wp/v2/posts&per_page=${per}&page=${page}&_fields=link,title`;
+        const r2 = await axios.get(alt, {
+          headers: {
+            'User-Agent': getUA(),
+            'Accept': 'application/json',
+            'Referer': (() => { try { return new URL(website).origin; } catch { return undefined; } })()
+          },
+          timeout: 12000,
+          maxRedirects: 3,
+          validateStatus: s => s < 500
+        });
+        if (Array.isArray(r2.data)) {
+          for (const item of r2.data) {
+            if (articles.size >= target) break;
+            const link = item?.link;
+            let title = item?.title?.rendered || item?.title || '';
+            title = String(title).replace(/<[^>]+>/g, '').trim();
+            if (!link || !title) continue;
+            const host = new URL(website).hostname;
+            const u = link.startsWith('/') ? `${website}${link}` : link;
+            if (!u.includes(host)) continue;
+            if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(u)) continue;
+            if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(u)) continue;
+            if (!articles.has(u)) {
+              articles.set(u, { title, url: u });
+            }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+}
+async function fetchWordPressSearchInto(website, target, articles) {
+  try {
+    const base = website.replace(/\/+$/, '');
+    const queries = ['news', 'business', 'nigeria', 'bank', 'memo', 'market', 'economy', 'finance', 'stock'];
+    for (const q of queries) {
+      if (articles.size >= target) break;
+      try {
+        const url = `${base}/wp-json/wp/v2/search?search=${encodeURIComponent(q)}&per_page=100&_fields=title,url`;
+        const res = await axios.get(url, {
+          headers: { 'User-Agent': getUA(), 'Accept': 'application/json' },
+          timeout: 12000,
+          maxRedirects: 3,
+          validateStatus: s => s < 500
+        });
+        if (Array.isArray(res.data)) {
+          for (const item of res.data) {
+            if (articles.size >= target) break;
+            const title = String(item?.title || '').replace(/<[^>]+>/g, '').trim();
+            const link = String(item?.url || '').trim();
+            if (!title || !link) continue;
             const host = new URL(website).hostname;
             const u = link.startsWith('/') ? `${website}${link}` : link;
             if (!u.includes(host)) continue;
@@ -119,7 +196,7 @@ async function fetchPage(url, timeout = 12000) {
       },
       timeout, maxRedirects: 5, validateStatus: s => s < 500
     });
-    return res.status === 200 ? cheerio.load(res.data) : null;
+    return (res.status >= 200 && res.status < 500) ? cheerio.load(res.data) : null;
   } catch (e) {
     return null;
   }
@@ -1071,6 +1148,9 @@ async function collectArticles(website, target = 350) {
         const isWp = html.includes('wp-content') || (($root('meta[name="generator"]').attr('content') || '').toLowerCase().includes('wordpress'));
         if (isWp) {
           await fetchWordPressPostsInto(website, target, articles);
+          if (articles.size < Math.min(60, target)) {
+            await fetchWordPressSearchInto(website, target, articles);
+          }
         }
       }
     } catch {}
@@ -1078,6 +1158,9 @@ async function collectArticles(website, target = 350) {
     try {
       if (articles.size < Math.min(80, target)) {
         await fetchWordPressPostsInto(website, target, articles);
+        if (articles.size < Math.min(60, target)) {
+          await fetchWordPressSearchInto(website, target, articles);
+        }
       }
     } catch {}
   }
@@ -1142,42 +1225,42 @@ async function collectArticles(website, target = 350) {
         });
       } catch {}
     }
-    for (let page = 1; page <= 20; page++) {
-      if (articles.size >= target) break;
+      for (let page = 1; page <= 20; page++) {
+        if (articles.size >= target) break;
 
-      const candidates = [];
-      if (page === 1) {
-        candidates.push(section);
-      } else {
-        candidates.push(`${section}?page=${page}`);
-        candidates.push(`${section}/page/${page}`);
-        candidates.push(`${section}?paged=${page}`);
-        candidates.push(`${section}?pageno=${page}`);
-        candidates.push(`${section}?pagenum=${page}`);
-        candidates.push(`${section}?pg=${page}`);
-      }
+        const candidates = [];
+        if (page === 1) {
+          candidates.push(section);
+        } else {
+          candidates.push(`${section}?page=${page}`);
+          candidates.push(`${section}/page/${page}`);
+          candidates.push(`${section}?paged=${page}`);
+          candidates.push(`${section}?pageno=${page}`);
+          candidates.push(`${section}?pagenum=${page}`);
+          candidates.push(`${section}?pg=${page}`);
+        }
 
-      let $ = null;
-      for (const u of candidates) {
-        $ = await fetchPage(u);
-        if ($) break;
-      }
-      if (!$) break;
+        let $ = null;
+        for (const u of candidates) {
+          $ = await fetchPage(u);
+          if ($) break;
+        }
+        if (!$) break;
 
-      const before = articles.size;
+        const before = articles.size;
 
-      $('a[href]').each((_, el) => {
-        if (articles.size >= target) return;
+        $('a[href]').each((_, el) => {
+          if (articles.size >= target) return;
 
-        const href = $(el).attr('href');
-        const title = $(el).text().trim() || $(el).attr('title');
+          const href = $(el).attr('href');
+          const title = $(el).text().trim() || $(el).attr('title');
 
-        if (!href || !title) return;
-        if (title.length < 15 || title.length > 300) return;
+          if (!href || !title) return;
+          if (title.length < 8 || title.length > 300) return;
 
-        let url = href.startsWith('/')
-          ? `${website}${href}`
-          : href;
+          let url = href.startsWith('/')
+            ? `${website}${href}`
+            : href;
 
         if (!url.includes(host)) return;
 
@@ -1219,11 +1302,17 @@ async function collectArticles(website, target = 350) {
     sitemapCandidates.push(`${website}/sitemap_index.xml`);
     sitemapCandidates.push(`${website}/sitemap.xml`);
     sitemapCandidates.push(`${website}/wp-sitemap.xml`);
+    sitemapCandidates.push(`${website}/post-sitemap.xml`);
+    sitemapCandidates.push(`${website}/sitemap-posts.xml`);
+    sitemapCandidates.push(`${website}/sitemap-1.xml`);
+    sitemapCandidates.push(`${website}/sitemap-2.xml`);
+    sitemapCandidates.push(`${website}/sitemap-news.xml`);
+    sitemapCandidates.push(`${website}/sitemap_index.xml?nocache=1`);
     try {
       for (let i = 1; i <= 12 && articles.size < target; i++) {
         try {
           const sm = `${website.replace(/\/+$/, '')}/wp-sitemap-posts-post-${i}.xml`;
-          const r = await axios.get(sm, { headers: { 'User-Agent': getUA() }, timeout: 10000, validateStatus: s => s < 500 });
+          const r = await axios.get(sm, { headers: { 'User-Agent': getUA(), 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8' }, timeout: 10000, validateStatus: s => s < 500 });
           const $p = cheerio.load(r.data, { xmlMode: true });
           $p('loc').each((_, el) => {
             if (articles.size >= target) return false;
@@ -1249,7 +1338,7 @@ async function collectArticles(website, target = 350) {
     for (const sm of sitemapCandidates) {
       if (articles.size >= target) break;
       try {
-        const res = await axios.get(sm, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
+        const res = await axios.get(sm, { headers: { 'User-Agent': getUA(), 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8' }, timeout: 12000, validateStatus: s => s < 500 });
         const $ = cheerio.load(res.data, { xmlMode: true });
         const locs = [];
         $('loc').each((_, el) => {
@@ -1262,8 +1351,8 @@ async function collectArticles(website, target = 350) {
         for (const loc of locs) {
           if (articles.size >= target) break;
           if (/\.(xml)(\?.*)?$/.test(loc) && loc.includes(host) && childFetched < 6) {
-            try {
-              const r2 = await axios.get(loc, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
+              try {
+              const r2 = await axios.get(loc, { headers: { 'User-Agent': getUA(), 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8' }, timeout: 12000, validateStatus: s => s < 500 });
               const $2 = cheerio.load(r2.data, { xmlMode: true });
               $2('loc').each((_, el2) => {
                 if (articles.size >= target) return false;
@@ -1332,6 +1421,38 @@ async function collectArticles(website, target = 350) {
               articles.set(url, { title, url });
             }
           });
+        }
+      }
+    } catch {}
+  }
+
+  if (articles.size < Math.min(20, target)) {
+    try {
+      const hostBase = new URL(website).hostname.replace(/^www\./, '');
+      const queries = [
+        `site:${hostBase} 2025`,
+        `site:${hostBase} 2024`,
+        `site:${hostBase} news`,
+        `"${hostBase}" site:${hostBase}`
+      ];
+      for (const q of queries) {
+        if (articles.size >= target) break;
+        const rs = await ddgHtmlSearch(q, 12);
+        for (const r of rs) {
+          if (articles.size >= target) break;
+          const url = r.link;
+          if (!url || !url.includes(hostBase)) continue;
+          if (/\/(tag|category|author|profile|search|login|signup|archive|topic|section)\b/i.test(url)) continue;
+          if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) continue;
+          const isArticle =
+            /\/\d{4}\//.test(url) ||
+            /\.(html|cms)$/.test(url) ||
+            /article|story|news/.test(url) ||
+            /\d{6,}/.test(url);
+          if (isArticle && !articles.has(url)) {
+            const title = r.title || '';
+            articles.set(url, { title, url });
+          }
         }
       }
     } catch {}
@@ -1633,7 +1754,7 @@ async function findAuthorProfile(authorName, website) {
     `${website}/writer/${nameUnderscore}`,
     `${website}/profile/${nameUnderscore}`,
     `${website}/?author_name=${nameSlug}`,
-    `${website}/?author_name=${nameUnderscore}`
+    `${website}/?author_name=${nameUnderscore}`,
 
     `${website}/etreporter/author-${nameSlug}`,
     `${website}/etreporter/author-${nameUnderscore}`
@@ -1651,10 +1772,7 @@ async function findAuthorProfile(authorName, website) {
       const qs = u.search.toLowerCase();
       const isAuthorPath = /author|writer|columnist|profile|people|contributors|staff|byline/.test(path) || /author_name=/.test(qs);
       if (isAuthorPath) {
-        const ok = await verifyUrl(url);
-        if (ok) {
-          return { url, $: null };
-        }
+        return { url, $: null };
       }
     } catch {}
   }
@@ -2578,6 +2696,16 @@ async function extractAuthorProfile(author, outletName, website) {
       const verified = await verifyArticles(serperAuthorArticles, author.name);
       console.log(`    Verified via Serper: ${verified.length}/${serperAuthorArticles.length}`);
       if (verified.length) {
+        articles = [...articles, ...verified.filter(a => !articles.some(ea => ea.url === a.url))];
+      }
+    }
+  }
+  
+  if (articles.length < 10) {
+    const fallbackArts = await findAuthorArticlesViaSerper(author.name, website, 20);
+    if (fallbackArts.length > 0) {
+      const verified = await verifyArticles(fallbackArts, author.name);
+      if (verified.length > 0) {
         articles = [...articles, ...verified.filter(a => !articles.some(ea => ea.url === a.url))];
       }
     }
