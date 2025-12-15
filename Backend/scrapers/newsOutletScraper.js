@@ -87,6 +87,25 @@ async function fetchWordPressPostsInto(website, target, articles) {
     }
   } catch {}
 }
+async function fetchWordPressCategories(website, maxPages = 4) {
+  const slugs = new Set();
+  try {
+    for (let page = 1; page <= maxPages; page++) {
+      try {
+        const url = `${website.replace(/\/+$/, '')}/wp-json/wp/v2/categories?per_page=50&page=${page}&_fields=slug`;
+        const res = await axios.get(url, { headers: { 'User-Agent': getUA() }, timeout: 10000, validateStatus: s => s < 500 });
+        if (Array.isArray(res.data)) {
+          for (const cat of res.data) {
+            const slug = String(cat?.slug || '').trim();
+            if (slug) slugs.add(slug);
+          }
+          if (res.data.length < 50) break;
+        }
+      } catch {}
+    }
+  } catch {}
+  return Array.from(slugs);
+}
 
 // ============ FETCH PAGE ============
 async function fetchPage(url, timeout = 12000) {
@@ -1055,6 +1074,12 @@ async function collectArticles(website, target = 350) {
         }
       }
     } catch {}
+    // Try WordPress REST regardless of detection (some sites block root page)
+    try {
+      if (articles.size < Math.min(80, target)) {
+        await fetchWordPressPostsInto(website, target, articles);
+      }
+    } catch {}
   }
 
   // STEP 2: AUTO-DETECT SECTIONS FROM NAVBAR/FOOTER/INTERNAL LINKS
@@ -1065,26 +1090,10 @@ async function collectArticles(website, target = 350) {
     `${website}/entertainment`, `${website}/tech`, `${website}/politics`
   ]);
   try {
-    const hostLower = host.toLowerCase();
-    if (hostLower.includes('nairametrics.com')) {
-      const base = website.replace(/\/+$/, '');
-      const nairaSections = [
-        'latest-news',
-        'category/news',
-        'category/business-news',
-        'category/markets',
-        'category/economy',
-        'category/companies',
-        'category/technology',
-        'category/opinion',
-        'category/analysis',
-        'category/investment',
-        'category/cryptocurrency',
-        'category/energy'
-      ];
-      for (const p of nairaSections) {
-        sectionUrls.add(`${base}/${p}`);
-      }
+    const base = website.replace(/\/+$/, '');
+    const cats = await fetchWordPressCategories(website);
+    for (const slug of cats) {
+      sectionUrls.add(`${base}/category/${slug}`);
     }
   } catch {}
 
@@ -1198,39 +1207,43 @@ async function collectArticles(website, target = 350) {
   }
 
   if (articles.size < Math.min(50, target)) {
-    const sitemapCandidates = [
-      `${website}/sitemap_index.xml`,
-      `${website}/sitemap.xml`,
-      `${website}/wp-sitemap.xml`
-    ];
+    const sitemapCandidates = [];
     try {
-      const hostLower = host.toLowerCase();
-      if (hostLower.includes('nairametrics.com')) {
-        for (let i = 1; i <= 12 && articles.size < target; i++) {
-          try {
-            const sm = `${website.replace(/\/+$/, '')}/wp-sitemap-posts-post-${i}.xml`;
-            const r = await axios.get(sm, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
-            const $p = cheerio.load(r.data, { xmlMode: true });
-            $p('loc').each((_, el) => {
-              if (articles.size >= target) return false;
-              const u = $p(el).text().trim();
-              if (!u || !u.includes(host)) return;
-              if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(u)) return;
-              if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(u)) return;
-              const isArticle =
-                /\?p=\d+/.test(u) ||
-                /\/\d{4}\//.test(u) ||
-                /\/\d{4}\/\d{2}\/\d{2}\//.test(u) ||
-                /\.(html|cms)$/.test(u) ||
-                /article|story|news/.test(u) ||
-                /\d{6,}/.test(u) ||
-                /articleshow|newsshow/.test(u);
-              if (isArticle && !articles.has(u)) {
-                articles.set(u, { title: '', url: u });
-              }
-            });
-          } catch {}
-        }
+      const robots = await axios.get(`${website.replace(/\/+$/, '')}/robots.txt`, { headers: { 'User-Agent': getUA() }, timeout: 8000, validateStatus: s => s < 500 });
+      const lines = String(robots.data || '').split(/\r?\n/);
+      for (const line of lines) {
+        const m = line.match(/sitemap:\s*(https?:\/\/\S+)/i);
+        if (m && m[1]) sitemapCandidates.push(m[1].trim());
+      }
+    } catch {}
+    sitemapCandidates.push(`${website}/sitemap_index.xml`);
+    sitemapCandidates.push(`${website}/sitemap.xml`);
+    sitemapCandidates.push(`${website}/wp-sitemap.xml`);
+    try {
+      for (let i = 1; i <= 12 && articles.size < target; i++) {
+        try {
+          const sm = `${website.replace(/\/+$/, '')}/wp-sitemap-posts-post-${i}.xml`;
+          const r = await axios.get(sm, { headers: { 'User-Agent': getUA() }, timeout: 10000, validateStatus: s => s < 500 });
+          const $p = cheerio.load(r.data, { xmlMode: true });
+          $p('loc').each((_, el) => {
+            if (articles.size >= target) return false;
+            const u = $p(el).text().trim();
+            if (!u || !u.includes(host)) return;
+            if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(u)) return;
+            if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(u)) return;
+            const isArticle =
+              /\?p=\d+/.test(u) ||
+              /\/\d{4}\//.test(u) ||
+              /\/\d{4}\/\d{2}\/\d{2}\//.test(u) ||
+              /\.(html|cms)$/.test(u) ||
+              /article|story|news/.test(u) ||
+              /\d{6,}/.test(u) ||
+              /articleshow|newsshow/.test(u);
+            if (isArticle && !articles.has(u)) {
+              articles.set(u, { title: '', url: u });
+            }
+          });
+        } catch {}
       }
     } catch {}
     for (const sm of sitemapCandidates) {
@@ -1974,6 +1987,11 @@ function getOutletSynonyms(website) {
     if (/indianexpress/.test(host) || base === 'indianexpress') { synonyms.add('indian express'); }
     if (/thehindu/.test(host) || base === 'thehindu') { synonyms.add('the hindu'); }
     if (/livemint/.test(host) || base === 'livemint' || base === 'mint') { synonyms.add('livemint'); synonyms.add('mint'); }
+    if (/icirnigeria/.test(host) || base === 'icirnigeria') {
+      synonyms.add('icir');
+      synonyms.add('icir nigeria');
+      synonyms.add('international centre for investigative reporting');
+    }
     return Array.from(synonyms).filter(s => s && s.length > 2);
   } catch { return []; }
 }
