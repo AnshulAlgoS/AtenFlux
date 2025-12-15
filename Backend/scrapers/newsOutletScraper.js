@@ -184,6 +184,70 @@ async function fetchWordPressCategories(website, maxPages = 4) {
   return Array.from(slugs);
 }
 
+async function fetchWordPressUsersInto(website, limit = 60) {
+  const authors = [];
+  try {
+    const base = website.replace(/\/+$/, '');
+    for (let page = 1; page <= 3 && authors.length < limit; page++) {
+      try {
+        const url = `${base}/wp-json/wp/v2/users?per_page=50&page=${page}&_fields=name,slug,link`;
+        const res = await axios.get(url, {
+          headers: { 'User-Agent': getUA(), 'Accept': 'application/json' },
+          timeout: 12000,
+          validateStatus: s => s < 500
+        });
+        if (Array.isArray(res.data)) {
+          for (const u of res.data) {
+            if (authors.length >= limit) break;
+            const name = String(u?.name || '').trim();
+            const slug = String(u?.slug || '').trim();
+            const link = String(u?.link || '').trim();
+            const profile = link || (slug ? `${base}/author/${slug}` : null);
+            if (!name || !profile) continue;
+            if (!isValidName(name)) continue;
+            authors.push({ name, profile });
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+  return authors;
+}
+
+async function fetchWordPressAuthorSitemaps(website, limit = 80) {
+  const authors = [];
+  try {
+    const base = website.replace(/\/+$/, '');
+    for (let i = 1; i <= 4 && authors.length < limit; i++) {
+      try {
+        const url = `${base}/wp-sitemap-users-${i}.xml`;
+        const res = await axios.get(url, {
+          headers: { 'User-Agent': getUA(), 'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8' },
+          timeout: 10000,
+          validateStatus: s => s < 500
+        });
+        const $ = cheerio.load(res.data, { xmlMode: true });
+        $('loc').each((_, el) => {
+          if (authors.length >= limit) return false;
+          const loc = $(el).text().trim();
+          if (!loc) return;
+          try {
+            const u = new URL(loc);
+            const parts = u.pathname.split('/').filter(Boolean);
+            const idx = parts.indexOf('author');
+            const slug = idx >= 0 ? parts[idx + 1] : null;
+            if (slug) {
+              const name = slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+              if (isValidName(name)) authors.push({ name, profile: loc });
+            }
+          } catch {}
+        });
+      } catch {}
+    }
+  } catch {}
+  return authors;
+}
+
 // ============ FETCH PAGE ============
 async function fetchPage(url, timeout = 12000) {
   try {
@@ -1076,7 +1140,7 @@ async function scrapeAuthorsFromDirectoryPage(pageUrl, limit = 50) {
   if (!$) return [];
   const authors = [];
   const seen = new Set();
-  const sels = ['a[href*="/author" ]', 'a[href*="/authors" ]', 'a[href*="/profile" ]', 'a[href*="/team" ]', 'a[href*="/contributors" ]', '[itemprop="author"] a', '[rel="author"]'];
+  const sels = ['a[href*="/author"]', 'a[href*="/authors"]', 'a[href*="/profile"]', 'a[href*="/team"]', 'a[href*="/contributors"]', '[itemprop="author"] a', '[rel="author"]'];
   for (const sel of sels) {
     $(sel).each((_, el) => {
       if (authors.length >= limit) return false;
@@ -2598,7 +2662,8 @@ async function extractAuthorProfile(author, outletName, website) {
     console.log(`    ✓ Profile: ${profileUrl}`);
 
     // STEP 5: Scrape articles from profile
-    const profileArticles = await scrapeArticlesFromProfile($, profileUrl, author.name, website);
+    const $page = $ || await fetchPage(profileUrl);
+    const profileArticles = await scrapeArticlesFromProfile($page, profileUrl, author.name, website);
     console.log(`    Found ${profileArticles.length} articles on profile`);
 
     // STEP 6: Verify articles
@@ -2619,30 +2684,32 @@ async function extractAuthorProfile(author, outletName, website) {
       '.author .taxonomy-description', '.author-area .taxonomy-description',
       '.entry-content .taxonomy-description', '.author-info .bio', '.author .bio', '.author-details .bio'
     ];
-    for (const sel of bioSelectors) {
-      const text = $(sel).first().text().trim();
-      if (text && text.length > 20 && text.length < 1000) { bio = text; break; }
-    }
-    if (!bio) {
-      // JSON-LD Person.description
-      $('script[type="application/ld+json"]').each((_, el) => {
-        if (bio) return false;
-        try {
-          const data = JSON.parse($(el).html());
-          const items = Array.isArray(data) ? data : [data];
-          for (const item of items) {
-            if (item['@type'] === 'Person' && typeof item.description === 'string') {
-              const text = item.description.trim();
-              if (text && text.length > 20 && text.length < 2000) { bio = text; break; }
+    if ($page) {
+      for (const sel of bioSelectors) {
+        const text = $page(sel).first().text().trim();
+        if (text && text.length > 20 && text.length < 1000) { bio = text; break; }
+      }
+      if (!bio) {
+        // JSON-LD Person.description
+        $page('script[type="application/ld+json"]').each((_, el) => {
+          if (bio) return false;
+          try {
+            const data = JSON.parse($page(el).html());
+            const items = Array.isArray(data) ? data : [data];
+            for (const item of items) {
+              if (item['@type'] === 'Person' && typeof item.description === 'string') {
+                const text = item.description.trim();
+                if (text && text.length > 20 && text.length < 2000) { bio = text; break; }
+              }
             }
-          }
-        } catch { }
-      });
-    }
-    if (!bio) {
-      // Meta description as weak bio fallback
-      const metaDesc = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content');
-      if (metaDesc && metaDesc.length > 20 && metaDesc.length < 300) bio = metaDesc.trim();
+          } catch { }
+        });
+      }
+      if (!bio) {
+        // Meta description as weak bio fallback
+        const metaDesc = $page('meta[name="description"]').attr('content') || $page('meta[property="og:description"]').attr('content');
+        if (metaDesc && metaDesc.length > 20 && metaDesc.length < 300) bio = metaDesc.trim();
+      }
     }
 
     if (bio) {
@@ -2654,7 +2721,7 @@ async function extractAuthorProfile(author, outletName, website) {
     }
 
     // Structured profile role and email
-    const { role: pageRole, email: pageEmail } = extractRoleAndEmail($, author.name);
+    const { role: pageRole, email: pageEmail } = $page ? extractRoleAndEmail($page, author.name) : { role: null, email: null };
     if (pageEmail) email = pageEmail;
     if (pageRole && !isGenericRole(pageRole) && (!role || isGenericRole(role))) {
       role = pageRole;
@@ -2663,31 +2730,33 @@ async function extractAuthorProfile(author, outletName, website) {
     const fn = author.name.split(/\s+/)[0].toLowerCase();
     const ln = author.name.split(/\s+/).pop()?.toLowerCase() || '';
     const rejectBrand = /economictimes|timesofindia|hindustantimes|thehindu|ndtv|indiatoday|indianexpress|livemint|news|official|team/i;
-    $('a[href*="twitter.com/"], a[href*="x.com/"]').each((i, el) => {
-      if (socialLinks.twitter) return false;
-      const href = $(el).attr('href');
-      if (!href || href.includes('/status/')) return;
-      const m = href.match(/(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/);
-      if (!m) return;
-      const user = m[1].toLowerCase();
-      if (rejectBrand.test(user)) return;
-      if (user.includes(fn) || (ln && user.includes(ln))) {
-        const url = `https://twitter.com/${m[1]}`;
-        socialLinks.twitter = url;
-      }
-    });
-    $('a[href*="linkedin.com/in/"]').each((i, el) => {
-      if (socialLinks.linkedin) return false;
-      const href = $(el).attr('href');
-      if (!href) return;
-      const m = href.match(/(https?:\/\/(?:www\.)?linkedin\.com\/in\/[a-zA-Z0-9_-]+)/);
-      if (!m) return;
-      const slug = m[1].split('/in/')[1]?.toLowerCase() || '';
-      if (rejectBrand.test(slug)) return;
-      if (slug.includes(fn) || (ln && slug.includes(ln))) {
-        socialLinks.linkedin = m[1];
-      }
-    });
+    if ($page) {
+      $page('a[href*="twitter.com/"], a[href*="x.com/"]').each((i, el) => {
+        if (socialLinks.twitter) return false;
+        const href = $page(el).attr('href');
+        if (!href || href.includes('/status/')) return;
+        const m = href.match(/(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/);
+        if (!m) return;
+        const user = m[1].toLowerCase();
+        if (rejectBrand.test(user)) return;
+        if (user.includes(fn) || (ln && user.includes(ln))) {
+          const url = `https://twitter.com/${m[1]}`;
+          socialLinks.twitter = url;
+        }
+      });
+      $page('a[href*="linkedin.com/in/"]').each((i, el) => {
+        if (socialLinks.linkedin) return false;
+        const href = $page(el).attr('href');
+        if (!href) return;
+        const m = href.match(/(https?:\/\/(?:www\.)?linkedin\.com\/in\/[a-zA-Z0-9_-]+)/);
+        if (!m) return;
+        const slug = m[1].split('/in/')[1]?.toLowerCase() || '';
+        if (rejectBrand.test(slug)) return;
+        if (slug.includes(fn) || (ln && slug.includes(ln))) {
+          socialLinks.linkedin = m[1];
+        }
+      });
+    }
   } else {
     console.log(`    ✗ No profile page found`);
     // Fallback: find articles via Serper when profile missing
@@ -2843,20 +2912,39 @@ export async function scrapeLightweight(outletName, maxAuthors = 30, progressCal
     }
 
     // STEP 3: Extract authors from bylines
-    let authors = await extractAuthorsFromBylines(articles, website, maxAuthors);
-    if (authors.length < 5) {
+    const targetAuthors = Math.max(20, maxAuthors);
+    let authors = await extractAuthorsFromBylines(articles, website, targetAuthors);
+    if (authors.length < 10) {
       const pages = await findAuthorsPagesViaSerper(website, outletName, country);
-      for (const p of pages.slice(0, 3)) {
+      for (const p of pages.slice(0, 5)) {
         const extra = await scrapeAuthorsFromDirectoryPage(p, 50);
         for (const a of extra) {
           if (!authors.some(x => x.name.toLowerCase() === a.name.toLowerCase())) authors.push({ name: a.name, articles: [], role: 'Journalist' });
-          if (authors.length >= 30) break;
+          if (authors.length >= targetAuthors) break;
         }
-        if (authors.length >= 30) break;
+        if (authors.length >= targetAuthors) break;
       }
-      if (authors.length === 0) {
-        return { error: `No authors found`, authorsCount: 0, authors: [] };
+    }
+    if (authors.length < 15) {
+      const wpUsers = await fetchWordPressUsersInto(website, 80);
+      for (const u of wpUsers) {
+        if (!authors.some(x => x.name.toLowerCase() === u.name.toLowerCase())) {
+          authors.push({ name: u.name, articles: [], role: 'Journalist' });
+          if (authors.length >= targetAuthors) break;
+        }
       }
+    }
+    if (authors.length < 15) {
+      const wpSitemapAuthors = await fetchWordPressAuthorSitemaps(website, 100);
+      for (const u of wpSitemapAuthors) {
+        if (!authors.some(x => x.name.toLowerCase() === u.name.toLowerCase())) {
+          authors.push({ name: u.name, articles: [], role: 'Journalist' });
+          if (authors.length >= targetAuthors) break;
+        }
+      }
+    }
+    if (authors.length === 0) {
+      return { error: `No authors found`, authorsCount: 0, authors: [] };
     }
 
     // STEPS 4-9: Extract full profile for each author
