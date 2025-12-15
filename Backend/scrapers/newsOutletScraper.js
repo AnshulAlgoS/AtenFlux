@@ -92,7 +92,12 @@ async function fetchWordPressPostsInto(website, target, articles) {
 async function fetchPage(url, timeout = 12000) {
   try {
     const res = await axios.get(url, {
-      headers: { 'User-Agent': getUA(), 'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8' },
+      headers: {
+        'User-Agent': getUA(),
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Referer': (() => { try { return new URL(url).origin; } catch { return undefined; } })()
+      },
       timeout, maxRedirects: 5, validateStatus: s => s < 500
     });
     return res.status === 200 ? cheerio.load(res.data) : null;
@@ -1614,6 +1619,8 @@ async function findAuthorProfile(authorName, website) {
     `${website}/author/${nameUnderscore}`,
     `${website}/writer/${nameUnderscore}`,
     `${website}/profile/${nameUnderscore}`,
+    `${website}/?author_name=${nameSlug}`,
+    `${website}/?author_name=${nameUnderscore}`
 
     `${website}/etreporter/author-${nameSlug}`,
     `${website}/etreporter/author-${nameUnderscore}`
@@ -1624,6 +1631,19 @@ async function findAuthorProfile(authorName, website) {
     if ($ && validateAuthorPage($, authorName, url)) {
       return { url, $ };
     }
+    // Accept verified author URLs even if blocked
+    try {
+      const u = new URL(url);
+      const path = u.pathname.toLowerCase();
+      const qs = u.search.toLowerCase();
+      const isAuthorPath = /author|writer|columnist|profile|people|contributors|staff|byline/.test(path) || /author_name=/.test(qs);
+      if (isAuthorPath) {
+        const ok = await verifyUrl(url);
+        if (ok) {
+          return { url, $: null };
+        }
+      }
+    } catch {}
   }
 
   return { url: null, $: null };
@@ -1668,7 +1688,7 @@ async function findAuthorArticlesViaSerper(authorName, website, max = 20) {
 
 // ============ STEP 5: SCRAPE ARTICLES FROM PROFILE PAGE ============
 async function scrapeArticlesFromProfile($, profileUrl, authorName, website) {
-  if (!$ || !profileUrl) return [];
+  if (!profileUrl) return [];
 
   const articles = new Map();
   const host = new URL(website).hostname;
@@ -1679,39 +1699,63 @@ async function scrapeArticlesFromProfile($, profileUrl, authorName, website) {
     `${profileUrl}/page/2`
   ];
 
-  for (const pageUrl of basePages) {
-    if (articles.size >= 10) break;
+  // If page HTML is available, parse links
+  if ($) {
+    for (const pageUrl of basePages) {
+      if (articles.size >= 10) break;
+      const $$ = pageUrl === profileUrl ? $ : await fetchPage(pageUrl);
+      if (!$$) continue;
+      $$('a[href]').each((i, el) => {
+        if (articles.size >= 10) return false;
+        const href = $$(el).attr('href');
+        const title = $$(el).text().trim() || $$(el).attr('title');
+        if (!href || !title || title.length < 15 || title.length > 300) return;
+        let url = href.startsWith('/') ? `${website}${href}` : href;
+        if (!url.includes(host)) return;
+        if (/\/(tag|category|author|profile|page|search|archive|topic|section)\//i.test(url)) return;
+        if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) return;
+        const isArticle =
+          /\/\d{4}\//.test(url) ||
+          /\.(html|cms)$/.test(url) ||
+          /article|story|news/.test(url) ||
+          /\d{6,}/.test(url);
+        if (isArticle && !articles.has(url)) {
+          articles.set(url, { title, url });
+        }
+      });
+    }
+  }
 
-    const $$ = pageUrl === profileUrl ? $ : await fetchPage(pageUrl);
-    if (!$$) continue;
-
-    $$('a[href]').each((i, el) => {
-      if (articles.size >= 10) return false;
-
-      const href = $$(el).attr('href');
-      const title = $$(el).text().trim() || $$(el).attr('title');
-
-      if (!href || !title || title.length < 15 || title.length > 300) return;
-
-      let url = href.startsWith('/')
-        ? `${website}${href}`
-        : href;
-
-      if (!url.includes(host)) return;
-
-      if (/\/(tag|category|author|profile|page|search|archive|topic|section)\//i.test(url)) return;
-      if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) return;
-
-      const isArticle =
-        /\/\d{4}\//.test(url) ||
-        /\.(html|cms)$/.test(url) ||
-        /article|story|news/.test(url) ||
-        /\d{6,}/.test(url);
-
-      if (isArticle && !articles.has(url)) {
-        articles.set(url, { title, url });
-      }
-    });
+  // If blocked, use author RSS feeds
+  if (articles.size < 10) {
+    const feeds = [];
+    const base = profileUrl.replace(/\/+$/, '');
+    if (/\?author_name=/.test(profileUrl)) {
+      feeds.push(`${profileUrl}&feed=rss2`);
+      feeds.push(`${profileUrl}&feed=atom`);
+    } else {
+      feeds.push(`${base}/feed`);
+    }
+    for (const f of feeds) {
+      try {
+        const res = await axios.get(f, { headers: { 'User-Agent': getUA() }, timeout: 10000 });
+        const $rss = cheerio.load(res.data, { xmlMode: true });
+        $rss('item, entry').each((_, el) => {
+          if (articles.size >= 10) return false;
+          const title = $rss(el).find('title').text().trim();
+          const link = $rss(el).find('link').text().trim() || $rss(el).find('link').attr('href');
+          if (!title || !link) return;
+          const url = link.startsWith('/') ? `${website}${link}` : link;
+          if (!url.includes(host)) return;
+          if (/\/(tag|author|search|archive|topic|video|photo|gallery)\b/i.test(url)) return;
+          if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) return;
+          if (!articles.has(url)) {
+            articles.set(url, { title, url });
+          }
+        });
+        if (articles.size >= 10) break;
+      } catch {}
+    }
   }
 
   return Array.from(articles.values());
