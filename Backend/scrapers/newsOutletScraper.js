@@ -709,6 +709,8 @@ const KNOWN_WEBSITES = {
   'washington post': 'https://www.washingtonpost.com',
   'al jazeera': 'https://www.aljazeera.com',
   'nairametrics': 'https://nairametrics.com',
+  'stears business': 'http://stearsng.com',
+  'stears': 'http://stearsng.com'
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
@@ -1603,7 +1605,7 @@ function isBlockedAuthorName(name, website = "") {
   return false;
 }
 // EXTRACTING AUTHORS AFTER BLOCKING 
-async function extractAuthorsFromBylines(articles, website, max = 10) {
+async function extractAuthorsFromBylines(articles, website, max = 30) {
   console.log(`\n[STEP 3] Checking bylines in ${articles.length} articles (target: ${max} authors)`);
   const authors = new Map();
 
@@ -2195,6 +2197,25 @@ function getOutletSynonyms(website) {
       synonyms.add('icir');
       synonyms.add('icir nigeria');
       synonyms.add('international centre for investigative reporting');
+    }
+    if (/stears/.test(host) || base === 'stears' || base === 'stearsng') {
+      synonyms.add('stears');
+      synonyms.add('stears business');
+      synonyms.add('stearsng');
+    }
+    if (/zikoko/.test(host) || base === 'zikoko') {
+      synonyms.add('zikoko');
+    }
+    if (/politicsnigeria/.test(host) || base === 'politicsnigeria') {
+      synonyms.add('politics nigeria');
+    }
+    if (/dailynigerian/.test(host) || base === 'dailynigerian') {
+      synonyms.add('daily nigerian');
+    }
+    if (/rpublc/.test(host) || base === 'rpublc' || /republic/.test(host)) {
+      synonyms.add('the republic');
+      synonyms.add('republic');
+      synonyms.add('rpublc');
     }
     return Array.from(synonyms).filter(s => s && s.length > 2);
   } catch { return []; }
@@ -2916,7 +2937,8 @@ async function extractAuthorProfile(author, outletName, website) {
 // ============ MAIN SCRAPER FUNCTION ============
 export async function scrapeLightweight(outletName, maxAuthors = 30, progressCallback = null) {
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`SCRAPER: ${outletName} | Target: ${maxAuthors} journalists`);
+  const targetAuthors = Math.max(30, maxAuthors);
+  console.log(`SCRAPER: ${outletName} | Target: ${targetAuthors} journalists`);
   console.log(`${'═'.repeat(60)}`);
 
   try {
@@ -2934,7 +2956,6 @@ export async function scrapeLightweight(outletName, maxAuthors = 30, progressCal
     }
 
     // STEP 3: Extract authors from bylines
-    const targetAuthors = Math.max(20, maxAuthors);
     let authors = await extractAuthorsFromBylines(articles, website, targetAuthors);
     if (authors.length < 10) {
       const pages = await findAuthorsPagesViaSerper(website, outletName, country);

@@ -30,7 +30,7 @@ export const FiltersPanel = ({ topics, outlets: propsOutlets = [], onFilterChang
 
       for (const url of urls) {
         try {
-          const res = await axios.get(url, { timeout: 10000 });
+          const res = await axios.get(url);
           authors = res.data.profiles || res.data;
           if (authors && authors.length > 0) {
             console.log(`✅ Fetched ${authors.length} profiles from ${url}`);

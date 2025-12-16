@@ -87,7 +87,7 @@ const Topics = () => {
 
       for (const url of urls) {
         try {
-          const res = await axios.get(url, { timeout: 5000 });
+          const res = await axios.get(url);
           const profiles = res.data.profiles || res.data || [];
           const uniqueOutlets = [...new Set(profiles.map((p: any) => p.outlet).filter(Boolean))] as string[];
           if (uniqueOutlets.length > 0) {

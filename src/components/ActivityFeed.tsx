@@ -29,7 +29,7 @@ export const ActivityFeed = () => {
         
         for (const url of urls) {
           try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+            const res = await fetch(url);
             const data = await res.json();
             profiles = data.profiles || data || [];
             if (profiles.length > 0) {

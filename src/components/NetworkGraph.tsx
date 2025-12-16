@@ -16,6 +16,8 @@ interface Node {
   influenceScore?: number;
   x?: number;
   y?: number;
+  vx?: number;
+  vy?: number;
   fx?: number | null;
   fy?: number | null;
 }
@@ -68,7 +70,7 @@ export const NetworkGraph = ({ selectedTopics = [], selectedOutlets = [] }: { se
 
       for (const url of urls) {
         try {
-          const res = await axios.get(url, { timeout: 10000 });
+          const res = await axios.get(url);
           // Handle different response formats
           authors = res.data.profiles || res.data;
           if (authors && authors.length > 0) {

@@ -83,6 +83,9 @@ const TOPICS = [
   "Environment",
 ];
 
+// Minimum number of authors to scrape
+const MIN_AUTHORS = 30;
+
 // ---------------- Stage 0: Find official website of outlet using DuckDuckGo ----------------
 async function findOutletWebsite(outletName) {
   try {
@@ -568,8 +571,7 @@ app.post("/scrape-authors", async (req, res) => {
       // Update progress
       scrapingJobs.set(jobId, { ...scrapingJobs.get(jobId), progress: 30, message: `Scraping ${pages.length} pages...` });
 
-      // Scrape authors from each page (limit to first 3 pages for speed)
-      const pagesToScrape = pages.slice(0, 3);
+      const pagesToScrape = pages.slice(0, 5);
       for (let i = 0; i < pagesToScrape.length; i++) {
         const pageUrl = pagesToScrape[i];
         console.log(`Scraping page ${i + 1}/${pagesToScrape.length}: ${pageUrl}`);
@@ -589,12 +591,21 @@ app.post("/scrape-authors", async (req, res) => {
       }
 
       // If we don't have enough authors and we have the outlet website, try scraping it directly
-      if (authors.length < 30 && outletWebsite) {
+      if (authors.length < MIN_AUTHORS && outletWebsite) {
         console.log(`Only found ${authors.length} authors, trying direct website scrape...`);
         scrapingJobs.set(jobId, { ...scrapingJobs.get(jobId), progress: 70, message: 'Trying direct website scrape...' });
 
-        const directAuthors = await scrapeOutletWebsite(outletWebsite, outlet, 30);
+        const directAuthors = await scrapeOutletWebsite(outletWebsite, outlet, MIN_AUTHORS);
         authors.push(...directAuthors);
+
+        let attempts = 0;
+        while (authors.length < MIN_AUTHORS && attempts < 2) {
+          await delay(2000);
+          const moreAuthors = await scrapeOutletWebsite(outletWebsite, outlet, MIN_AUTHORS);
+          authors.push(...moreAuthors);
+          attempts++;
+          scrapingJobs.set(jobId, { ...scrapingJobs.get(jobId), authorsFound: authors.length, message: `Retrying website scrape (${attempts})...` });
+        }
       }
 
       // Update progress
@@ -630,7 +641,7 @@ app.post("/scrape-authors", async (req, res) => {
         authorsFound: authors.length,
         authors,
         progress: 100,
-        message: authors.length >= 30 ? "Successfully scraped 30+ authors" : `Found ${authors.length} authors (target: 30)`,
+        message: authors.length >= MIN_AUTHORS ? `Successfully scraped ${MIN_AUTHORS}+ authors` : `Found ${authors.length} authors (target: ${MIN_AUTHORS})`,
         completedAt: new Date(),
         startTime: scrapingJobs.get(jobId).startTime
       });
@@ -691,15 +702,14 @@ app.post("/scrape-authors-quick", async (req, res) => {
       console.log(`Author pages: ${pages.slice(0, 3).join(', ')}`);
     }
 
-    // Scrape only first 2 pages for quick response
-    const pagesToScrape = pages.slice(0, 2);
+    const pagesToScrape = pages.slice(0, 3);
     for (const pageUrl of pagesToScrape) {
       console.log(`→ Quick scraping: ${pageUrl}`);
-      const pageAuthors = await scrapeAuthorsFromPage(pageUrl, 30);
+      const pageAuthors = await scrapeAuthorsFromPage(pageUrl, MIN_AUTHORS);
       console.log(`  Found ${pageAuthors.length} authors from this page`);
       authors.push(...pageAuthors);
-      if (authors.length >= 30) {
-        console.log(`✓ Reached 30 authors, stopping SERP scraping`);
+      if (authors.length >= MIN_AUTHORS) {
+        console.log(`✓ Reached ${MIN_AUTHORS} authors, stopping SERP scraping`);
         break;
       }
       await delay(1000);
@@ -708,11 +718,19 @@ app.post("/scrape-authors-quick", async (req, res) => {
     console.log(`Current total: ${authors.length} authors after SERP scraping`);
 
     // If still not enough, try direct website scrape
-    if (authors.length < 30 && outletWebsite) {
+    if (authors.length < MIN_AUTHORS && outletWebsite) {
       console.log(`\n→ Only ${authors.length} authors found. Trying direct website scrape of ${outletWebsite}...`);
-      const directAuthors = await scrapeOutletWebsite(outletWebsite, outlet, 30);
+      const directAuthors = await scrapeOutletWebsite(outletWebsite, outlet, MIN_AUTHORS);
       console.log(`✓ Direct scrape found ${directAuthors.length} additional authors`);
       authors.push(...directAuthors);
+      let attempts = 0;
+      while (authors.length < MIN_AUTHORS && attempts < 2) {
+        await delay(2000);
+        const moreAuthors = await scrapeOutletWebsite(outletWebsite, outlet, MIN_AUTHORS);
+        console.log(`✓ Retry ${attempts + 1} found ${moreAuthors.length} additional authors`);
+        authors.push(...moreAuthors);
+        attempts++;
+      }
     }
 
     // Deduplicate
@@ -761,7 +779,7 @@ app.post("/scrape-authors-quick", async (req, res) => {
       website: outletWebsite,
       authors,
       count: authors.length,
-      message: authors.length >= 30 ? "Successfully scraped 30+ authors" : `Found ${authors.length} authors (target: 30)`,
+      message: authors.length >= MIN_AUTHORS ? `Successfully scraped ${MIN_AUTHORS}+ authors` : `Found ${authors.length} authors (target: ${MIN_AUTHORS})`,
       note: "Quick scrape - for complete results, use /scrape-authors"
     });
   } catch (err) {

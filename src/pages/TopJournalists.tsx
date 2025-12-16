@@ -125,7 +125,7 @@ const TopJournalists = () => {
 
     for (const url of urls) {
       try {
-        const res = await axios.get(url, { timeout: API_CONFIG.TIMEOUT });
+        const res = await axios.get(url);
         const payload = res.data as any;
         const list: Journalist[] = Array.isArray(payload)
           ? payload
