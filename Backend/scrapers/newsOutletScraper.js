@@ -710,7 +710,9 @@ const KNOWN_WEBSITES = {
   'al jazeera': 'https://www.aljazeera.com',
   'nairametrics': 'https://nairametrics.com',
   'stears business': 'http://stearsng.com',
-  'stears': 'http://stearsng.com'
+  'stears': 'http://stearsng.com',
+  'sports live media': 'https://sportslivemedia.co.za',
+  'overton pod':'https://podcastparty.co.za/overton-pod/overton-pod/'
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
