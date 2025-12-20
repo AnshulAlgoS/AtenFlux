@@ -740,7 +740,9 @@ const KNOWN_WEBSITES = {
   'enugu metro': 'https://enugumetro.ng',
   'ekiti news': 'https://ekitinews.com.ng',
   'ekitinews': 'https://ekitinews.com.ng',
-  'document women': 'https://documentwomen.com'
+  'document women': 'https://documentwomen.com',
+  'global patriot news': 'https://globalpatriotnews.com',
+  'global patriot': 'https://globalpatriotnews.com'
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
@@ -829,10 +831,7 @@ async function detectOutletWebsite(outletName) {
       return brute;
     }
   } catch { }
-  if (googleValid && googleCandidate) {
-    console.log(`  Selected website (google): ${googleCandidate}`);
-    return googleCandidate;
-  }
+
   //  STEP 4: SMART GLOBAL DOMAIN GUESSING
 
   console.log(`   Trying domain guessing...`);
