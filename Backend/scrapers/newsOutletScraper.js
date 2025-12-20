@@ -736,7 +736,11 @@ const KNOWN_WEBSITES = {
   'stears business': 'http://stearsng.com',
   'stears': 'http://stearsng.com',
   'sports live media': 'https://sportslivemedia.co.za',
-  'overton pod':'https://podcastparty.co.za/overton-pod/overton-pod/'
+  'overton pod':'https://podcastparty.co.za/overton-pod/overton-pod/',
+  'enugu metro': 'https://enugumetro.ng',
+  'ekiti news': 'https://ekitinews.com.ng',
+  'ekitinews': 'https://ekitinews.com.ng',
+  'document women': 'https://documentwomen.com'
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
