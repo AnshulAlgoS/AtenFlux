@@ -3,21 +3,21 @@ import * as cheerio from 'cheerio';
 import dotenv from 'dotenv';
 import { extractKeywords, categorizeTopics } from '../utils/nlpAnalyzer.js';
 
-// Load environment variables
 dotenv.config();
 
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
+if (!SERPER_API_KEY) console.warn('⚠️ SERPER_API_KEY missing');
 
-if (!SERPER_API_KEY) {
-  console.warn('⚠️ SERPER_API_KEY not found in environment variables');
-}
-
-// ============ UTILITIES ============
+// Utilities
 const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (iPad; CPU OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.3; rv:122.0) Gecko/20100101 Firefox/122.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0'
 ];
 
 const getUA = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
@@ -30,7 +30,7 @@ async function serperSearch(query, num = 10) {
       { q: query, num, gl: 'in', hl: 'en' },
       { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' }, timeout: 15000 }
     );
-    return res.data.organic || [];
+    return data.organic || [];
   } catch (e) {
     return [];
   }
@@ -40,10 +40,8 @@ async function serperSearch(query, num = 10) {
 async function ddgHtmlSearch(query, max = 10) {
   try {
     const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    const res = await axios.get(url, {
-      headers: { 'User-Agent': getUA(), 'Accept': 'text/html' },
-      timeout: 12000
-    });
+    const res = await fetchRaw(url, { timeout: 12000, type: 'html' });
+    if (!res) return [];
     const $ = cheerio.load(res.data);
     const results = [];
     $('.result__a').each((i, el) => {
@@ -67,17 +65,8 @@ async function fetchWordPressPostsInto(website, target, articles) {
       try {
         const base = website.replace(/\/+$/, '');
         const url = `${base}/wp-json/wp/v2/posts?per_page=${per}&page=${page}&orderby=date&order=desc&_fields=link,title`;
-        const res = await axios.get(url, {
-          headers: {
-            'User-Agent': getUA(),
-            'Accept': 'application/json',
-            'Referer': (() => { try { return new URL(website).origin; } catch { return undefined; } })()
-          },
-          timeout: 12000,
-          maxRedirects: 3,
-          validateStatus: s => s < 500
-        });
-        if (Array.isArray(res.data)) {
+        const res = await fetchRaw(url, { timeout: 12000, type: 'json' });
+        if (res && Array.isArray(res.data)) {
           for (const item of res.data) {
             if (articles.size >= target) break;
             const link = item?.link;
@@ -99,17 +88,8 @@ async function fetchWordPressPostsInto(website, target, articles) {
       try {
         if (articles.size >= target) break;
         const alt = `${website.replace(/\/+$/, '')}/?rest_route=/wp/v2/posts&per_page=${per}&page=${page}&_fields=link,title`;
-        const r2 = await axios.get(alt, {
-          headers: {
-            'User-Agent': getUA(),
-            'Accept': 'application/json',
-            'Referer': (() => { try { return new URL(website).origin; } catch { return undefined; } })()
-          },
-          timeout: 12000,
-          maxRedirects: 3,
-          validateStatus: s => s < 500
-        });
-        if (Array.isArray(r2.data)) {
+        const r2 = await fetchRaw(alt, { timeout: 12000, type: 'json' });
+        if (r2 && Array.isArray(r2.data)) {
           for (const item of r2.data) {
             if (articles.size >= target) break;
             const link = item?.link;
@@ -138,13 +118,8 @@ async function fetchWordPressSearchInto(website, target, articles) {
       if (articles.size >= target) break;
       try {
         const url = `${base}/wp-json/wp/v2/search?search=${encodeURIComponent(q)}&per_page=100&_fields=title,url`;
-        const res = await axios.get(url, {
-          headers: { 'User-Agent': getUA(), 'Accept': 'application/json' },
-          timeout: 12000,
-          maxRedirects: 3,
-          validateStatus: s => s < 500
-        });
-        if (Array.isArray(res.data)) {
+        const res = await fetchRaw(url, { timeout: 12000, type: 'json' });
+        if (res && Array.isArray(res.data)) {
           for (const item of res.data) {
             if (articles.size >= target) break;
             const title = String(item?.title || '').replace(/<[^>]+>/g, '').trim();
@@ -248,22 +223,71 @@ async function fetchWordPressAuthorSitemaps(website, limit = 80) {
   return authors;
 }
 
-// ============ FETCH PAGE ============
-async function fetchPage(url, timeout = 12000) {
-  try {
-    const res = await axios.get(url, {
-      headers: {
-        'User-Agent': getUA(),
+// ============ FETCH RAW (Base Helper) ============
+async function fetchRaw(url, options = {}) {
+  const timeout = options.timeout || 15000;
+  const maxAttempts = options.retries || 3;
+  const type = options.type || 'html'; // 'html' or 'json'
+
+  let attempts = 0;
+  while (attempts < maxAttempts) {
+    try {
+      const ua = getUA();
+      const headers = {
+        'User-Agent': ua,
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Referer': (() => { try { return new URL(url).origin; } catch { return undefined; } })()
-      },
-      timeout, maxRedirects: 5, validateStatus: s => s < 500
-    });
-    return (res.status >= 200 && res.status < 500) ? cheerio.load(res.data) : null;
-  } catch (e) {
-    return null;
+        'Referer': (() => { try { return new URL(url).origin + '/'; } catch { return ''; } })(),
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        ...options.headers
+      };
+
+      if (type === 'json') {
+        headers['Accept'] = 'application/json, text/plain, */*';
+      } else {
+        headers['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8';
+      }
+
+      const res = await axios.get(url, {
+        headers,
+        timeout,
+        maxRedirects: 5,
+        validateStatus: s => s < 500 || s === 503
+      });
+
+      // Check for soft-blocks
+      if (res.status === 403 || res.status === 503) throw new Error('Blocked status');
+
+      if (typeof res.data === 'string') {
+        if (res.data.includes('Just a moment...') ||
+          res.data.includes('Security check') ||
+          res.data.includes('Cloudflare') ||
+          res.data.includes('Verify you are human')) {
+          throw new Error('Blocked content');
+        }
+      }
+
+      return res;
+    } catch (e) {
+      attempts++;
+      if (attempts >= maxAttempts) return null;
+      await delay(1000 + Math.random() * 2000);
+    }
   }
+  return null;
+}
+
+// ============ FETCH PAGE ============
+async function fetchPage(url, timeout = 15000) {
+  const res = await fetchRaw(url, { timeout, type: 'html' });
+  if (res && res.status >= 200 && res.status < 300) {
+    return cheerio.load(res.data);
+  }
+  return null;
 }
 
 // ============ VERIFY URL EXISTS ============
@@ -1300,7 +1324,8 @@ async function collectArticles(website, target = 350) {
     if (/\/category\//i.test(section)) {
       const feedUrl = `${section.replace(/\/+$/, '')}/feed`;
       try {
-        const rf = await axios.get(feedUrl, { headers: { 'User-Agent': getUA() }, timeout: 8000 });
+        const rf = await fetchRaw(feedUrl, { timeout: 8000, type: 'html' });
+        if (!rf) continue;
         const $f = cheerio.load(rf.data, { xmlMode: true });
         $f('item').each((_, el) => {
           if (articles.size >= target) return false;
@@ -2238,8 +2263,15 @@ function buildOutletMatchTokens(website, outletName) {
   tokens.add('business journalist');
   return Array.from(tokens);
 }
-async function socialPageMatchesOutlet(url, website, outletName) {
+async function socialPageMatchesOutlet(url, website, outletName, snippet = '') {
   const tokens = buildOutletMatchTokens(website, outletName);
+  
+  // 1. Fast Check: Use search snippet if available
+  if (snippet) {
+    const text = snippet.toLowerCase();
+    if (tokens.some(t => t && text.includes(t.toLowerCase()))) return true;
+  }
+
   try {
     const $ = await fetchPage(url);
     if ($) {
@@ -2248,11 +2280,13 @@ async function socialPageMatchesOutlet(url, website, outletName) {
         $('meta[property="og:description"]').attr('content') || '',
         $('meta[name="description"]').attr('content') || '',
         $('h1').first().text() || '',
-        $('body').text().substring(0, 1200) || ''
+        $('body').text().substring(0, 1500) || ''
       ].join(' ').toLowerCase();
       if (tokens.some(t => t && text.includes(t.toLowerCase()))) return true;
     }
   } catch { }
+  
+  // Fallback: Check if URL structure implies a personal profile, then confirm via Search
   try {
     const u = new URL(url);
     const h = u.hostname.toLowerCase();
@@ -2401,148 +2435,144 @@ async function findSocialLinksViaSerper(authorName, outletName, website) {
   const lastName = authorName.split(/\s+/).pop()?.toLowerCase() || "";
   const outletLower = outletName.toLowerCase();
 
-  // Block outlet + brand accounts
-  const rejectPatterns = /economictimes|timesofindia|hindustantimes|thehindu|ndtv|indiatoday|indianexpress|livemint|news|official|team/i;
+  // Dynamic Reject Patterns: Block outlet brand accounts
+  const host = new URL(website).hostname.replace(/^www\./, '');
+  const domainBase = host.split('.')[0];
+  const outletSlug = outletLower.replace(/[^a-z0-9]/g, '');
+  
+  // Create a regex that blocks: generic words, the outlet name itself, and the domain base
+  const rejectParts = [
+    'news', 'official', 'team', 'support', 'contact', 'media', 'daily', 'weekly',
+    'editors', 'desk', 'bureau', 'staff', 'digital', 'online',
+    outletSlug, 
+    domainBase
+  ].filter(s => s && s.length > 3); 
+  
+  const rejectRe = new RegExp(rejectParts.join('|'), 'i');
 
-  // TWITTER SEARCH 
+  const syns = getOutletSynonyms(website);
+  const primarySyn = syns[0] || outletName;
 
-  const synFromWebsite = getOutletSynonyms(website);
-  const synonyms = (Array.isArray(synFromWebsite) && synFromWebsite.length > 0)
-    ? synFromWebsite
-    : [outletName];
-  let twitterResultsAll = [];
-  for (const syn of synonyms) {
-    const twitterQuery = `"${authorName}" "${syn}" twitter`;
-    console.log(`      Twitter search: "${twitterQuery}"`);
-    const rs = await serperSearch(twitterQuery, 10);
-    twitterResultsAll.push(...rs);
-    if (links.twitter) break;
-  }
-  console.log(`      Found ${twitterResultsAll.length} results`);
-  const twitterCandidates = [];
-  for (const r of twitterResultsAll.slice(0, 20)) {
-    const link = r.link;
-    if (!link) continue;
-    if (!link.includes("twitter.com") && !link.includes("x.com")) continue;
-    if (/\/status\/|\/intent\/|\/hashtag\/|\/search/.test(link)) continue;
-    const m = link.match(/(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/);
-    if (!m) continue;
-    const username = m[1].toLowerCase();
-    if (rejectPatterns.test(username)) continue;
-    const text = `${r.title || ""} ${r.snippet || ""}`.toLowerCase();
-    let score = 0;
-    if (text.includes(authorName.toLowerCase())) score += 3;
-    if (text.includes(firstName)) score += 2;
-    if (lastName && text.includes(lastName)) score += 2;
-    if (username.includes(firstName)) score += 2;
-    if (lastName && username.includes(lastName)) score += 2;
-    if (/^https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/[a-z0-9_]+\/?$/i.test(link)) score += 1;
-    twitterCandidates.push({ url: `https://twitter.com/${m[1]}`, score });
-  }
-  twitterCandidates.sort((a, b) => b.score - a.score);
-  if (twitterCandidates.length) {
-    let chosenT = null;
-    for (const cand of twitterCandidates.slice(0, 5)) {
-      if (await verifyUrl(cand.url)) {
-        const ok = await socialPageMatchesOutlet(cand.url, website, outletName);
-        if (ok) { chosenT = cand.url; break; }
+  // --- PREPARE QUERIES ---
+  const twitterQueries = [
+    `"${authorName}" "${primarySyn}" twitter`,
+    `"${authorName}" twitter journalist`
+  ];
+  
+  const linkedinQueries = [
+    `"${authorName}" "${primarySyn}" site:linkedin.com/in`,
+    `"${authorName}" site:linkedin.com/in`
+  ];
+
+  // --- HELPER: SEARCH & PARSE ---
+  const runSearches = async (queries, platform) => {
+    const allResults = [];
+    // Run all queries for this platform in parallel
+    const promises = queries.map(q => serperSearch(q, 8)); 
+    const results = await Promise.all(promises);
+    
+    results.flat().forEach(r => {
+      if (!r.link) return;
+      const link = r.link;
+      
+      // Basic URL Validation
+      if (platform === 'twitter') {
+        if (!link.includes("twitter.com") && !link.includes("x.com")) return;
+        if (/\/status\/|\/intent\/|\/hashtag\/|\/search/.test(link)) return;
+      } else if (platform === 'linkedin') {
+        if (!/linkedin\.com\/(in|pub)\//.test(link)) return;
+        if (/\/company\/|\/jobs\/|\/pulse\//.test(link)) return;
+      }
+      
+      // Extract Username/Slug for Rejection Check
+      let identifier = '';
+      if (platform === 'twitter') {
+        const m = link.match(/(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/);
+        if (m) identifier = m[1].toLowerCase();
+      } else {
+        const m = link.match(/\/in\/([a-zA-Z0-9_-]+)/);
+        if (m) identifier = m[1].toLowerCase();
+      }
+      
+      if (!identifier || rejectRe.test(identifier)) return;
+      
+      // Scoring
+      let score = 0;
+      const text = `${r.title || ""} ${r.snippet || ""}`.toLowerCase();
+      
+      if (text.includes(authorName.toLowerCase())) score += 5;
+      else {
+        if (text.includes(firstName)) score += 2;
+        if (lastName && text.includes(lastName)) score += 2;
+      }
+      
+      if (text.includes(outletLower)) score += 3;
+      if (syns.some(s => text.includes(s.toLowerCase()))) score += 2;
+      if (text.includes('journalist') || text.includes('writer') || text.includes('reporter')) score += 1;
+      
+      // Username matching
+      if (identifier.includes(firstName)) score += 2;
+      if (lastName && identifier.includes(lastName)) score += 2;
+
+      allResults.push({ url: link, score, snippet: text });
+    });
+    
+    // Dedup by URL
+    const unique = [];
+    const seen = new Set();
+    allResults.sort((a, b) => b.score - a.score);
+    for (const item of allResults) {
+      if (!seen.has(item.url)) {
+        seen.add(item.url);
+        unique.push(item);
       }
     }
-    if (chosenT) {
-      links.twitter = chosenT;
+    return unique;
+  };
+
+  // --- EXECUTE SEARCHES ---
+  console.log(`      Running parallel searches for Twitter & LinkedIn...`);
+  const [twitterCandidates, linkedinCandidates] = await Promise.all([
+    runSearches(twitterQueries, 'twitter'),
+    runSearches(linkedinQueries, 'linkedin')
+  ]);
+
+  // --- VERIFY TWITTER (Top 3) ---
+  if (twitterCandidates.length) {
+    const checks = await Promise.all(twitterCandidates.slice(0, 3).map(async cand => {
+       if (await socialPageMatchesOutlet(cand.url, website, outletName, cand.snippet)) {
+         return cand.url;
+       }
+       return null;
+    }));
+    const valid = checks.find(Boolean);
+    if (valid) {
+      links.twitter = valid;
       console.log(`      ✓ Twitter found: ${links.twitter}`);
     } else {
       console.log(`      ✗ No Twitter matched outlet`);
     }
+  } else {
+    console.log(`      ✗ No Twitter found`);
   }
 
-  if (!links.twitter) console.log(`      ✗ No Twitter found`);
-
-  // LINKEDIN SEARCH 
-  let linkedinResultsAll = [];
-  const parts = authorName.split(/\s+/).filter(Boolean);
-  const firstLast = parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : authorName;
-  const synPrimary = (Array.isArray(synonyms) && synonyms.length ? synonyms[0] : outletLower);
-  const synSecondary = (Array.isArray(synonyms) && synonyms.length > 1 ? synonyms[1] : null);
-  const queries = [
-    `"${authorName}" site:linkedin.com/in`,
-    `"${firstLast}" "${synPrimary}" site:linkedin.com/in`,
-    ...(synSecondary ? [`"${firstLast}" "${synSecondary}" site:linkedin.com/in`] : []),
-    `"${authorName}" "${outletLower}" site:linkedin.com/in`
-  ];
-  for (const q of queries) {
-    const rs = await serperSearch(q, 8);
-    linkedinResultsAll.push(...rs);
-    if (linkedinResultsAll.length >= 24) break;
-  }
-  const linkedinCandidates = [];
-  for (const r of linkedinResultsAll.slice(0, 24)) {
-    const link = r.link;
-    if (!link) continue;
-    if (!/linkedin\.com\/(in|pub)\//.test(link)) continue;
-    if (/\/company\/|\/jobs\/|\/pulse\//.test(link)) continue;
-    const m = link.match(/(https?:\/\/(?:[a-zA-Z0-9.-]+\.)?linkedin\.com\/(?:in|pub)\/[a-zA-Z0-9_-]+)/);
-    if (!m) continue;
-    const slug = (m[1].split("/in/")[1] || m[1].split("/pub/")[1] || "").toLowerCase();
-    if (!slug || slug === 'dir' || slug.length < 3) continue;
-    if (!/[a-z]/.test(slug)) continue;
-    if (rejectPatterns.test(slug)) continue;
-    const text = `${r.title || ""} ${r.snippet || ""}`.toLowerCase();
-    let score = 0;
-    if (text.includes(authorName.toLowerCase())) score += 3;
-    if (slug.includes(parts[0]?.toLowerCase() || '')) score += 2;
-    if (parts.length >= 2 && slug.includes(parts[parts.length - 1].toLowerCase())) score += 2;
-    if (text.includes(outletLower)) score += 2;
-    if (synPrimary && text.includes(synPrimary.toLowerCase())) score += 1;
-    linkedinCandidates.push({ url: m[1], score });
-  }
-  linkedinCandidates.sort((a, b) => b.score - a.score);
+  // --- VERIFY LINKEDIN (Top 3) ---
   if (linkedinCandidates.length) {
-    const top = linkedinCandidates.slice(0, 3);
-    const checks = await Promise.all(top.map(async c => {
-      const valid = await verifyUrl(c.url);
-      if (!valid) return null;
-      const ok = await socialPageMatchesOutlet(c.url, website, outletName);
-      return ok ? c.url : null;
+    const checks = await Promise.all(linkedinCandidates.slice(0, 3).map(async cand => {
+       if (await socialPageMatchesOutlet(cand.url, website, outletName, cand.snippet)) {
+         return cand.url;
+       }
+       return null;
     }));
-    const chosen = checks.find(Boolean) || null;
-    if (chosen) {
-      links.linkedin = chosen;
+    const valid = checks.find(Boolean);
+    if (valid) {
+      links.linkedin = valid;
       console.log(`      ✓ LinkedIn found: ${links.linkedin}`);
     } else {
       console.log(`      ✗ No LinkedIn matched outlet`);
     }
-  }
-
-  if (!links.linkedin) console.log(`      ✗ No LinkedIn found`);
-
-  if (!links.linkedin) {
-    const parts = authorName.split(/\s+/).filter(Boolean);
-    const firstLast = parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : authorName;
-    const rs = await ddgHtmlSearch(`"${firstLast}" site:linkedin.com/in`, 8);
-    const ddgCandidates = [];
-    for (const r of rs.slice(0, 16)) {
-      const link = r.link;
-      if (!link || !/linkedin\.com\/(in|pub)\//.test(link)) continue;
-      if (/\/company\/|\/jobs\/|\/pulse\//.test(link)) continue;
-      const m = link.match(/(https?:\/\/(?:[a-zA-Z0-9.-]+\.)?linkedin\.com\/(?:in|pub)\/[a-zA-Z0-9_-]+)/);
-      if (!m) continue;
-      const slug = (m[1].split('/in/')[1] || m[1].split('/pub/')[1] || '').toLowerCase();
-      if (!slug || slug === 'dir' || slug.length < 3) continue;
-      if (!/[a-z]/.test(slug)) continue;
-      if (rejectPatterns.test(slug)) continue;
-      let score = 0;
-      if (slug.includes(parts[0]?.toLowerCase() || '')) score += 2;
-      if (parts.length >= 2 && slug.includes(parts[parts.length - 1].toLowerCase())) score += 2;
-      ddgCandidates.push({ url: m[1], score });
-    }
-    ddgCandidates.sort((a, b) => b.score - a.score);
-    for (const cand of ddgCandidates.slice(0, 2)) {
-      if (await verifyUrl(cand.url)) {
-        const ok = await socialPageMatchesOutlet(cand.url, website, outletName);
-        if (ok) { links.linkedin = cand.url; break; }
-      }
-    }
+  } else {
+    console.log(`      ✗ No LinkedIn found`);
   }
 
   return links;
@@ -2917,8 +2947,11 @@ async function extractAuthorProfile(author, outletName, website) {
   const influence = Math.min(100, 50 + uniqueArticles.length * 3 +
     (socialLinks.twitter ? 10 : 0) + (socialLinks.linkedin ? 10 : 0) + (bio ? 5 : 0));
 
+  // Determine last active date
+  const lastActiveAt = await inferLastActiveDate(uniqueVerifiedArticles.length > 0 ? uniqueVerifiedArticles : uniqueArticles);
+
   console.log(`    ══════════════════════════════════════`);
-  console.log(`    Role: ${role} | Articles: ${uniqueArticles.length} | Twitter: ${socialLinks.twitter ? '✓' : '✗'} | LinkedIn: ${socialLinks.linkedin ? '✓' : '✗'}`);
+  console.log(`    Role: ${role} | Articles: ${uniqueArticles.length} | Twitter: ${socialLinks.twitter ? '✓' : '✗'} | LinkedIn: ${socialLinks.linkedin ? '✓' : '✗'} | Last Active: ${lastActiveAt || 'Unknown'}`);
 
   return {
     name: author.name,
@@ -2933,9 +2966,12 @@ async function extractAuthorProfile(author, outletName, website) {
     totalArticles: uniqueArticles.length,
     topics: topics.slice(0, 5),
     keywords: keywordStrings.slice(0, 10),
-    influenceScore: influence
+    influenceScore: influence,
+    lastActiveAt
   };
 }
+
+
 // ============ MAIN SCRAPER FUNCTION ============
 export async function scrapeLightweight(outletName, maxAuthors = 30, progressCallback = null) {
   console.log(`\n${'═'.repeat(60)}`);
@@ -2954,11 +2990,15 @@ export async function scrapeLightweight(outletName, maxAuthors = 30, progressCal
     // STEP 2: Collect 300-400 articles
     const articles = await collectArticles(website, 350);
     if (articles.length === 0) {
-      return { error: `No articles found on ${website}`, authorsCount: 0, authors: [] };
+      console.log(`    ✗ No articles found on ${website}.`);
     }
 
     // STEP 3: Extract authors from bylines
-    let authors = await extractAuthorsFromBylines(articles, website, targetAuthors);
+    let authors = [];
+    if (articles.length > 0) {
+      authors = await extractAuthorsFromBylines(articles, website, targetAuthors);
+    }
+
     if (authors.length < 10) {
       const pages = await findAuthorsPagesViaSerper(website, outletName, country);
       for (const p of pages.slice(0, 5)) {
