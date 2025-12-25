@@ -62,7 +62,7 @@ AtenFlux/
 │   ├── routes/
 │   │   └── authorRoutes.js    # Job-based scraping API endpoints
 │   ├── scrapers/
-│   │   └── newsOutletScraper.js  # Core scraping logic (3000+ lines)
+│   │   └── newsOutletScraper.js  # Core scraping logic 
 │   └── utils/
 │       └── nlpAnalyzer.js     # Topic categorization, keyword extraction
 │
@@ -79,7 +79,7 @@ AtenFlux/
 │   └── config/
 │   │   └── api.ts             # API endpoint configuration
 │
-└── documentation.md           # This document
+└── documentation.md          
 ```
 
 ### Data Flow Architecture
@@ -209,23 +209,6 @@ The system was redesigned to use lightweight HTTP requests with server-side HTML
 - Better error recovery
 - Simplified deployment
 
-**Technical changes:**
-
-```javascript
-// Before (Puppeteer)
-const browser = await puppeteer.launch();
-const page = await browser.newPage();
-await page.goto(url, { waitUntil: 'networkidle0' });
-const content = await page.content();
-
-// After (Axios + Cheerio)
-const response = await axios.get(url, {
-  headers: { 'User-Agent': getRandomUserAgent() },
-  timeout: 15000
-});
-const $ = cheerio.load(response.data);
-```
-
 ### Phase 3: SerpAPI Integration (Enhanced)
 
 SerpAPI was integrated for two critical functions:
@@ -253,16 +236,7 @@ Priority Order:
 1. SerpAPI search (primary)
 2. DuckDuckGo Lite (fallback)
 3. Direct URL patterns (.in, .co.in, .com)
-4. Google search (last resort)
 ```
-
-**Scoring algorithm:**
-
-- Homepage URLs receive massive priority boost (1,000,000 points)
-- Indian TLDs (.in, .co.in) receive bonus (50,000 points)
-- Corporate/group sites penalized (500,000 points deduction)
-- Foreign TLDs disqualified (1,000,000 points deduction)
-
 ### 2. Article Collection (`collectArticlesFromWebsite`)
 
 Five-strategy cascade for comprehensive article discovery:
