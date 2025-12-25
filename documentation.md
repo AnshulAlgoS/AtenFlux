@@ -836,5 +836,4 @@ Areas for continued development:
 
 ---
 
-*Document prepared for research internship discussion*
 *Last updated: December 2024*
