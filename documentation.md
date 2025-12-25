@@ -14,9 +14,9 @@
 6. [Data Pipeline and Workflow](#data-pipeline-and-workflow)
 7. [Network Graph Visualization](#network-graph-visualization)
 8. [Data Accuracy Mechanisms](#data-accuracy-mechanisms)
-9. [Scalability Considerations](#scalability-considerations)
+9. [Scalability & Performance](#scalability--performance)
 10. [Challenges and Solutions](#challenges-and-solutions)
-11. [Future Improvements](#future-improvements)
+11. [Roadmap & Tech Debt](#roadmap--tech-debt)
 12. [API Reference](#api-reference)
 
 ---
@@ -77,7 +77,7 @@ AtenFlux/
 │   │   ├── TopJournalists.tsx # Main scraper interface
 │   │   └── Topics.tsx         # Topic exploration
 │   └── config/
-│       └── api.ts             # API endpoint configuration
+│   │   └── api.ts             # API endpoint configuration
 │
 └── documentation.md           # This document
 ```
@@ -491,39 +491,25 @@ function calculateInfluence(journalist) {
 
 ---
 
-## Scalability Considerations
+## Scalability & Performance
 
-### Current Architecture Limits
+Currently running on a single t3.medium instance. We can handle ~3 concurrent scraping jobs before SerpAPI rate limits (and CPU steal) kick in. MVP is stable, but batch processing large outlets (TOI, Hindu) causes visible event loop lag.
 
-| Dimension | Current Capacity | Limiting Factor |
-|-----------|------------------|-----------------|
-| Concurrent scrapes | 3 outlets | SerpAPI rate limits |
-| Articles per outlet | 500+ | Processing time |
-| Authors per outlet | 35 | API calls per author |
-| Total profiles in DB | 1000+ | MongoDB Atlas free tier |
+### Current Bottlenecks
+1.  **Event Loop Blocking**: The `await` loop in `collectArticles` is CPU-bound during HTML parsing (Cheerio). We need to offload parsing to worker threads.
+2.  **Memory Leaks**: RSS feed parsing creates large temporary objects. Heap snapshots show spikes to ~400MB during multi-outlet scrapes.
 
-### Horizontal Scaling Path
+### Architecture Evolution (Planned)
+**Phase 1: Async Worker Queues (In Progress)**
+Moving from in-memory processing to a Redis + BullMQ setup:
+-   `POST /scrape` -> Pushes job to `scrape_queue`.
+-   **Workers**: Stateless consumers that handle one outlet per process.
+-   **Resilience**: Automatic retries for network timeouts (which Axios currently swallows sometimes).
 
-```
-Current: Single Node.js process
-    │
-    ▼
-Phase 1: Job queue (Redis + Bull)
-    │
-    ▼
-Phase 2: Worker processes (PM2 cluster)
-    │
-    ▼
-Phase 3: Distributed workers (Kubernetes)
-```
-
-### Optimization Techniques Implemented
-
-1. **Batch processing**: 5 concurrent article fetches
-2. **Early termination**: Stop when target authors found
-3. **Connection pooling**: Axios keep-alive
-4. **Response caching**: Cheerio DOM reuse
-5. **Smart sampling**: 2-article verification limit
+**Phase 2: Proxy Rotation**
+Cloudflare is starting to flag our static IP.
+-   Plan: Integrate BrightData residential proxies.
+-   Logic: Rotate IP per 50 requests or on any 403 response.
 
 ---
 

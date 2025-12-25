@@ -30,7 +30,9 @@ async function serperSearch(query, num = 10) {
       { q: query, num, gl: 'in', hl: 'en' },
       { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' }, timeout: 15000 }
     );
-    return data.organic || [];
+    const data = res.data || {};
+    const organic = Array.isArray(data.organic) ? data.organic : [];
+    return organic;
   } catch (e) {
     return [];
   }
@@ -260,13 +262,16 @@ async function fetchRaw(url, options = {}) {
       });
 
       // Check for soft-blocks
-      if (res.status === 403 || res.status === 503) throw new Error('Blocked status');
+      if (res.status === 403 || res.status === 503 || res.status === 429) throw new Error('Blocked status');
 
       if (typeof res.data === 'string') {
         if (res.data.includes('Just a moment...') ||
           res.data.includes('Security check') ||
           res.data.includes('Cloudflare') ||
-          res.data.includes('Verify you are human')) {
+          res.data.includes('Verify you are human') ||
+          res.data.includes('Attention Required!') ||
+          res.data.includes('cf-error') ||
+          res.data.includes('DDoS protection')) {
           throw new Error('Blocked content');
         }
       }
@@ -287,6 +292,22 @@ async function fetchPage(url, timeout = 15000) {
   if (res && res.status >= 200 && res.status < 300) {
     return cheerio.load(res.data);
   }
+  // Fallback: use read-only snapshot to bypass JS/Cloudflare blocks
+  try {
+    const u = new URL(url);
+    const snapHttps = `https://r.jina.ai/https://${u.hostname}${u.pathname}${u.search}`;
+    const snapRes = await fetchRaw(snapHttps, { timeout: Math.min(20000, timeout + 5000), type: 'html' });
+    if (snapRes && snapRes.status >= 200 && snapRes.status < 400 && typeof snapRes.data === 'string') {
+      const html = `<html><head><meta charset="utf-8"></head><body><pre>${snapRes.data}</pre></body></html>`;
+      return cheerio.load(html);
+    }
+    const snapHttp = `https://r.jina.ai/http://${u.hostname}${u.pathname}${u.search}`;
+    const snapRes2 = await fetchRaw(snapHttp, { timeout: Math.min(20000, timeout + 5000), type: 'html' });
+    if (snapRes2 && snapRes2.status >= 200 && snapRes2.status < 400 && typeof snapRes2.data === 'string') {
+      const html = `<html><head><meta charset="utf-8"></head><body><pre>${snapRes2.data}</pre></body></html>`;
+      return cheerio.load(html);
+    }
+  } catch {}
   return null;
 }
 
@@ -742,7 +763,12 @@ const KNOWN_WEBSITES = {
   'ekitinews': 'https://ekitinews.com.ng',
   'document women': 'https://documentwomen.com',
   'global patriot news': 'https://globalpatriotnews.com',
-  'global patriot': 'https://globalpatriotnews.com'
+  'global patriot': 'https://globalpatriotnews.com',
+  'katsina times': 'https://katsinatimes.com',
+  'katsinatimes': 'https://katsinatimes.com',
+  'kemi filani': 'https://www.kemifilani.ng',
+  'kemifilani': 'https://www.kemifilani.ng',
+  'kemi filani news': 'https://www.kemifilani.ng'
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
@@ -1576,6 +1602,39 @@ async function collectArticles(website, target = 350) {
     } catch {}
   }
 
+  if (articles.size < Math.min(120, target)) {
+    try {
+      const hostBase = new URL(website).hostname.replace(/^www\./, '');
+      const queries = [
+        `site:${hostBase}`,
+        `site:${hostBase} 2025`,
+        `site:${hostBase} 2024`,
+        `site:${hostBase} news`,
+        `site:${hostBase} "By"`
+      ];
+      for (const q of queries) {
+        if (articles.size >= target) break;
+        const rs = await serperSearch(q, 20);
+        for (const r of rs) {
+          if (articles.size >= target) break;
+          const url = r.link;
+          if (!url || !url.includes(hostBase)) continue;
+          if (/\/(tag|category|author|profile|search|login|signup|archive|topic|section)\b/i.test(url)) continue;
+          if (/\.(jpg|png|gif|pdf|mp4|mp3)$/i.test(url)) continue;
+          const isArticle =
+            /\/\d{4}\//.test(url) ||
+            /\.(html|cms)$/.test(url) ||
+            /article|story|news|articleshow|newsshow/.test(url) ||
+            /\d{6,}/.test(url);
+          if (isArticle && !articles.has(url)) {
+            const title = r.title || '';
+            articles.set(url, { title, url });
+          }
+        }
+      }
+    } catch {}
+  }
+
   console.log(`  Total collected: ${articles.size}`);
   return Array.from(articles.values()).slice(0, target);
 }
@@ -1616,8 +1675,20 @@ function isBlockedAuthorName(name, website = "") {
   ];
 
   // Block if it contains outlet name
-  if (outlet && clean.includes(outlet.replace(/^https?:\/\//, "").replace("www.", ""))) {
-    return true;
+  if (outlet) {
+    const domain = outlet.replace(/^https?:\/\//, "").replace("www.", "");
+    const siteName = domain.split('.')[0]; 
+    const authorSimplified = clean.replace(/\s+/g, "");
+    
+    if (authorSimplified.includes(siteName)) {
+      return true;
+    }
+
+    if (siteName === authorSimplified) {
+      return true;
+    }
+    
+    if (clean.includes(domain)) return true;
   }
 
   // Block if pattern matched
@@ -1697,7 +1768,10 @@ async function extractAuthorsFromBylines(articles, website, max = 30) {
         const bylineSelectors = [
           '.author-name', '.byline-author', '[rel="author"]', '.author', '.byline',
           '.writer-name', '[itemprop="author"] [itemprop="name"]', '[itemprop="author"]',
-          '.story-author', '.article-author', '.post-author'
+          '.story-author', '.article-author', '.post-author',
+          '.byline a', '.entry-meta .byline a', '.post-meta .byline a',
+          '.meta-author a', '.td-post-author-name a', '.jeg_meta_author a', '.author-link a',
+          '.single-post-meta .author a', '.post-meta .author a'
         ];
 
         for (const sel of bylineSelectors) {
@@ -1709,6 +1783,14 @@ async function extractAuthorsFromBylines(articles, website, max = 30) {
             .replace(/^by\s+/i, '')
             .replace(/\|.*$/, '')
             .trim();
+
+          if ((!name || /^by$/i.test(name)) && $el.length) {
+            const $child = $el.find('a,[itemprop="name"],.author-name,strong').first();
+            const childText = ($child.text() || '').trim();
+            if (childText) {
+              name = childText.replace(/^by\s+/i, '').replace(/\|.*$/, '').trim();
+            }
+          }
 
           if (name.includes(',')) {
             const parts = name.split(',');
@@ -1731,6 +1813,14 @@ async function extractAuthorsFromBylines(articles, website, max = 30) {
             const role = matchRole(roleText);
             if (role) authorRole = role;
             break;
+          }
+        }
+
+        if (!authorName) {
+          const bodyText = $('body').text();
+          const m = bodyText.match(/\bBy\s+([A-Z][\p{L}'\-]+(?:\s+[A-Z][\p{L}'\-]+){1,4})\b/u);
+          if (m && m[1] && isValidName(m[1]) && !isBlockedAuthorName(m[1], website)) {
+            authorName = m[1];
           }
         }
       }
