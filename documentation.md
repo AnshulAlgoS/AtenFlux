@@ -44,7 +44,7 @@ topic, and presents the data through an interactive bipartite network graph.
 | Metric | Target | Current |
 |--------|--------|---------|
 | Journalists per outlet | 30+ | 25-35 |
-| Articles per journalist | 5-30 | 8-10 average |
+| Articles per journalist | 5-30 | 3-8 average |
 | Topic accuracy | 70%+ | 50-83% |
 | Profile verification rate | 80%+ | 83% |
 
