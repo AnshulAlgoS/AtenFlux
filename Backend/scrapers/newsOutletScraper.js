@@ -768,7 +768,19 @@ const KNOWN_WEBSITES = {
   'katsinatimes': 'https://katsinatimes.com',
   'kemi filani': 'https://www.kemifilani.ng',
   'kemifilani': 'https://www.kemifilani.ng',
-  'kemi filani news': 'https://www.kemifilani.ng'
+  'kemi filani news': 'https://www.kemifilani.ng',
+
+  // Senegal & South Africa
+  'actusen': 'https://actusen.sn',
+  'l\'actu acho': 'https://www.lactuacho.com',
+  'lactu acho': 'https://www.lactuacho.com',
+  'dakar midi': 'https://www.dakarmidi.net',
+  'buzz senegal': 'https://www.buzzsenegal.com',
+  'wrestling world': 'https://www.wrestling-world.com/',
+  'the bulletin': 'https://thebulletin.co.za/category/news/',
+  'sa people': 'https://www.sapeople.com/',
+  'okmzansi': 'https://okmzansi.co.za',
+  'IT Web': 'https://www.itweb.co.za/'
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
