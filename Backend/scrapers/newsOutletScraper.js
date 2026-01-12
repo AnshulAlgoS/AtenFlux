@@ -780,7 +780,8 @@ const KNOWN_WEBSITES = {
   'the bulletin': 'https://thebulletin.co.za/category/news/',
   'sa people': 'https://www.sapeople.com/',
   'okmzansi': 'https://okmzansi.co.za',
-  'IT Web': 'https://www.itweb.co.za/'
+  'IT Web ': 'https://www.itweb.co.za/',
+  'gsport for girls':'https://gsport.co.za/category/newsroom/'
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
