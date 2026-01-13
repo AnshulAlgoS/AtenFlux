@@ -781,7 +781,19 @@ const KNOWN_WEBSITES = {
   'sa people': 'https://www.sapeople.com/',
   'okmzansi': 'https://okmzansi.co.za',
   'IT Web ': 'https://www.itweb.co.za/',
-  'gsport for girls':'https://gsport.co.za/category/newsroom/'
+  'gsport for girls':'https://gsport.co.za/category/newsroom/',
+  'AlimoshoToday':'https://www.alimoshotoday.com',
+  'Benjamindada.com':'https://benjamindada.com',
+  'Campus Reporter':'https://campusreporter.ng',
+  'Nasarawa Newsline': 'https://nasarawanewsline.com.ng',
+  'NotJustOk': 'https://notjustok.com',
+  'Olori Supergal':'www.olorisupergal.com',
+  'Rural Reporters':'https://ruralreporters.com',
+  'ScoreNigeria':'https://scorenigeria.com.ng',
+  'The Bounce':'https://thebounce.net/',
+  'AnaedoOnline':'https://www.anaedoonline.ng',
+  'Imo News': 'https://imonews.ng'
+
 };
 
 // ============ STEP 1: DETECT WEBSITE ============
